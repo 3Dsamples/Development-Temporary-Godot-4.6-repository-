@@ -1,0 +1,55 @@
+SUMMARY OF PRODUCED FILES (SESSION April 28–30, 2025)
+======================================================
+Total files generated: 48  (Files 436 – 483)
+Last file: unified_procedural_terrain_generator.h (File 470)
+
+COMPLETED SUBSYSTEMS
+--------------------
+1. **Physics‑driven pipe generator** – soft‑body tubular mesh with FEM entity creation (Files 436‑437)
+2. **Wind system** – aerodynamic forces on cloth/soft‑body triangles with turbulence (438‑439)
+3. **Gravity field system** – attractor, repulsor, directional fields across all engines (440‑441)
+4. **Magnetic field system** – dipole forces/torques on bodies with magnetic moment (442‑443)
+5. **Spring / muscle system** – damped springs (444‑445) and Hill‑type muscle model (446)
+6. **Soft‑body pressure cavity** – closed volume pressurisation with feedback (447)
+7. **TreeNSearch BVH integration** – KNN, radius, parallel point‑set queries (448‑450)
+8. **Unified spatial query manager** – queries against all engines via TreeNSearch (451‑452)
+9. **SPH density calculator** – chunked parallel BVH‑based density computation (453)
+10. **SPH force calculator** – parallel pressure, viscosity, surface tension integration (454)
+11. **Soft collision detector** – TreeNSearch broad‑phase + Gaia GJK narrow‑phase (455)
+12. **Penalty contact solver** – exponential penalty with Coulomb friction (456)
+13. **IPC solver** – log‑barrier contact forces (457)
+14. **Soft self‑collision detector / resolver** – vertex‑face and edge‑edge (458‑459)
+15. **Neighbour search engine** – density + acceleration + pair generation in one pass (460)
+16. **Cloth self‑collision** – TreeNSearch‑based VF and EE detection + IPC/penalty (461)
+17. **BVH broad‑phase** – replaces Gaia BVH with TreeNSearch for rigid bodies (462)
+18. **Raycast (TreeNSearch)** – single‑ray and batched parallel (463)
+19. **Overlap query** – sphere/AABB overlap via centroids (464)
+20. **Point cloud generator** – Poisson‑disk sampling + TreeNSearch BVH (465)
+21. **Mesh voxeliser** – voxel grid → point cloud / tetrahedral mesh (466)
+22. **Adaptive sub‑stepping** – adjusts sub‑steps based on speed and penetration (467)
+23. **Contact clustering** – hash‑grid + union‑find island builder (468)
+24. **Parallel island solver** – worker‑thread PGS with warm‑starting (469)
+25. **Procedural terrain generator** – multi‑octave noise, heightfield, tet mesh, BVH (470)
+
+NEXT FILE(S) TO GENERATE
+------------------------
+* UnifiedProceduralVegetationScatter – Poisson‑disk scattering of vegetation
+  on terrain using TreeNSearch for proximity queries and creating static
+  rigid bodies/colliders with random rotation and scale.  (File 471)
+
+CAPABILITIES REMAINING
+----------------------
+- Fracture system (stress‑based splitting)
+- Constraint manager (universal joint interface)
+- Procedural vegetation scatter
+- Particle system integration with BVH
+- GPU acceleration for SPH/MPM via compute shaders
+- Network replication (skipped per earlier instruction)
+
+
+INSTRUCTIONS FOR CONTINUATION
+-----------------------------
+Please resume from **File 471** with **UnifiedProceduralVegetationScatter**,
+continuing the pattern of high‑performance, fully‑inlined C++ headers for
+Godot 4.6, building on TreeNSearch, gravity, soft‑body, rigid‑body, and
+the unified multi‑engine pipeline.
