@@ -1,0 +1,1 @@
+    std::unordered_map<uint64_t, std::weak_ptr<BaseEntity>> entity_map_;   // for ID lookup
