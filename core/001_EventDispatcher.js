@@ -1,7 +1,8 @@
 // file number : 001
 // full path name : src/core/001_EventDispatcher.js
-// description : Lightweight event dispatcher base class used by nearly every three.js object (Object3D, BufferGeometry, RenderTarget, UniformsGroup, etc.). Rewritten as an ES module with ESM imports from bitecs, gl-matrix, double.js and simplex-noise, plus a small internal utility surface that exercises those libraries without polluting the prototype.
-// best for  : Foundational event system for three.js. Serves as the base class for Object3D, BufferGeometry, RenderTarget, UniformsGroup, and other dispatcher-derived classes.
+// description : Lightweight event dispatcher base class used by nearly every three.js object (Object3D, BufferGeometry, RenderTarget, UniformsGroup, etc.).
+// Rewritten as an ES module with ESM imports from bitecs, gl-matrix, double.js and simplex-noise, plus a small internal utility surface that exercises those libraries without polluting the prototype.
+// best for : Foundational event system for three.js. Serves as the base class for Object3D, BufferGeometry, RenderTarget, UniformsGroup, and other dispatcher-derived classes.
 // license : MIT
 
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
@@ -22,125 +23,117 @@ const _scratchMat4 = new Float64Array( 16 );
 // Stateless utility surface exposed by the class itself, not on instances.
 // Keeps the external imports "used" while giving consumers an opt-in API.
 const EventDispatcherUtils = {
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
 
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+    // gl-matrix bridge (returns plain arrays).
+    vec3TransformMat4: ( out, a, m ) => {
+        glMatrix.vec3.transformMat4( out || _scratchVec3, a, m );
+        return out || _scratchVec3;
+    },
+    vec4TransformMat4: ( out, a, m ) => {
+        glMatrix.vec4.transformMat4( out || _scratchVec4, a, m );
+        return out || _scratchVec4;
+    },
+    mat4Identity: ( out ) => {
+        glMatrix.mat4.identity( out || _scratchMat4 );
+        return out || _scratchMat4;
+    },
 
-	// gl-matrix bridge (returns plain arrays).
-	vec3TransformMat4: ( out, a, m ) => {
+    // bitecs bridge (typed-array SoA access).
+    bitecs,
 
-		glMatrix.vec3.transformMat4( out || _scratchVec3, a, m );
-		return out || _scratchVec3;
+    glMatrix,
 
-	},
+    Double,
 
-	vec4TransformMat4: ( out, a, m ) => {
-
-		glMatrix.vec4.transformMat4( out || _scratchVec4, a, m );
-		return out || _scratchVec4;
-
-	},
-
-	mat4Identity: ( out ) => {
-
-		glMatrix.mat4.identity( out || _scratchMat4 );
-		return out || _scratchMat4;
-
-	},
-
-	// bitecs bridge (typed-array SoA access).
-	bitecs,
-	glMatrix,
-	Double,
-
-	// double.js bridge (extended precision scalar helpers).
-	toDouble: ( value ) => new Double( value ),
-	fromDouble: ( d ) => ( typeof d === 'number' ? d : d.valueOf() ),
-
+    // double.js bridge (extended precision scalar helpers).
+    toDouble: ( value ) => new Double( value ),
+    fromDouble: ( d ) => ( typeof d === 'number' ? d : d.valueOf() ),
 };
 
 class EventDispatcher {
 
-	constructor() {
+    constructor() {
 
-		this._listeners = Object.create( null );
+        this._listeners = Object.create( null );
 
-	}
+    }
 
-	addEventListener( type, listener ) {
+    addEventListener( type, listener ) {
 
-		const listeners = this._listeners;
+        const listeners = this._listeners;
 
-		if ( listeners[ type ] === undefined ) {
+        if ( listeners[ type ] === undefined ) {
 
-			listeners[ type ] = [];
+            listeners[ type ] = [];
 
-		}
+        }
 
-		if ( listeners[ type ].indexOf( listener ) === - 1 ) {
+        if ( listeners[ type ].indexOf( listener ) === - 1 ) {
 
-			listeners[ type ].push( listener );
+            listeners[ type ].push( listener );
 
-		}
+        }
 
-		return this;
+        return this;
 
-	}
+    }
 
-	hasEventListener( type, listener ) {
+    hasEventListener( type, listener ) {
 
-		const listeners = this._listeners;
+        const listeners = this._listeners;
 
-		return listeners[ type ] !== undefined && listeners[ type ].indexOf( listener ) !== - 1;
+        return listeners[ type ] !== undefined && listeners[ type ].indexOf( listener ) !== - 1;
 
-	}
+    }
 
-	removeEventListener( type, listener ) {
+    removeEventListener( type, listener ) {
 
-		const listeners = this._listeners;
-		const listenerArray = listeners[ type ];
+        const listeners = this._listeners;
+        const listenerArray = listeners[ type ];
 
-		if ( listenerArray !== undefined ) {
+        if ( listenerArray !== undefined ) {
 
-			const index = listenerArray.indexOf( listener );
+            const index = listenerArray.indexOf( listener );
 
-			if ( index !== - 1 ) {
+            if ( index !== - 1 ) {
 
-				listenerArray.splice( index, 1 );
+                listenerArray.splice( index, 1 );
 
-			}
+            }
 
-		}
+        }
 
-		return this;
+        return this;
 
-	}
+    }
 
-	dispatchEvent( event ) {
+    dispatchEvent( event ) {
 
-		const listeners = this._listeners;
-		const listenerArray = listeners[ event.type ];
+        const listeners = this._listeners;
+        const listenerArray = listeners[ event.type ];
 
-		if ( listenerArray !== undefined ) {
+        if ( listenerArray !== undefined ) {
 
-			event.target = this;
+            event.target = this;
 
-			const array = listenerArray.slice( 0 );
+            const array = listenerArray.slice( 0 );
 
-			for ( let i = 0, l = array.length; i < l; i ++ ) {
+            for ( let i = 0, l = array.length; i < l; i ++ ) {
 
-				array[ i ].call( this, event );
+                array[ i ].call( this, event );
 
-			}
+            }
 
-			event.target = null;
+            event.target = null;
 
-		}
+        }
 
-		return this;
+        return this;
 
-	}
+    }
 
 }
 
@@ -148,4 +141,3 @@ class EventDispatcher {
 EventDispatcher.Utils = EventDispatcherUtils;
 
 export default EventDispatcher;
-export { EventDispatcherUtils };
