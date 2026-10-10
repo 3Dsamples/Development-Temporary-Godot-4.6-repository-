@@ -1,24 +1,18 @@
 // file number : 011
 // full path name : src/core/011_BufferAttribute.js
-// description : Stores data for a vertex attribute (position, normal, uv, color, etc.) associated with a geometry, enabling efficient GPU upload. Rewritten as an ES module; extends the local 001_EventDispatcher and consumes 002_Vector2, 003_Vector3, and 016_Vector4 for the fromBufferAttribute / toBufferAttribute bridging helpers. Bridges to 001_MathUtils for denormalize / normalize / clamp / generateUUID, gl-matrix for packing the attribute header (itemSize, count, normalized, version) into a vec4, double.js for high-precision byte-length tracking, bitecs for SoA attribute-column registration, and simplex-noise for procedural attribute generators. All non-chat three.js r185 imports (DataUtils, StaticDrawUsage, FloatType) are imported explicitly so the module remains self-contained.
-// best for  : Base class for all geometry attributes. Directly consumed by BufferGeometry, WebGLAttributes, and InstancedBufferAttribute.
+// description : Stores data for a vertex attribute (position, normal, uv, color, etc.) associated with a geometry, enabling efficient GPU upload. Rewritten as an ES module; extends the local 001_EventDispatcher and consumes 001_MathUtils, 002_Vector2, 003_Vector3, and 016_Vector4 from the threejsbitecs/math folder for the fromBufferAttribute / toBufferAttribute bridging helpers. Bridges to 001_MathUtils for denormalize / normalize / clamp / generateUUID, gl-matrix for packing the attribute header (itemSize, count, normalized, version) into a vec4, double.js for high-precision byte-length tracking, bitecs for SoA attribute-column registration, and simplex-noise for procedural attribute generators. All non-math three.js r185 imports (DataUtils, StaticDrawUsage, FloatType) are imported explicitly so the module remains self-contained.
+// best for : Base class for all geometry attributes. Directly consumed by BufferGeometry, WebGLAttributes, and InstancedBufferAttribute.
 // license : MIT
 
-// ── DeepSeek chat link dependencies (rewritten core) ─────────────────────────
 import EventDispatcher from './001_EventDispatcher.js';
-import MathUtils from './001_MathUtils.js';
+import MathUtils from '../math/001_MathUtils.js';
 import Vector2 from '../math/002_Vector2.js';
 import Vector3 from '../math/003_Vector3.js';
 import Vector4 from '../math/016_Vector4.js';
 
-// ── three.js r185 src/ dependencies NOT in the DeepSeek chat link ────────────
-// These are the exact imports from the original r185 BufferAttribute.js source.
-// DataUtils provides the FP16 <-> FP32 conversion tables; constants.js provides
-// the usage / type enumerations consumed by the class.
-import { StaticDrawUsage, FloatType } from '../constants.js';
-import { fromHalfFloat, toHalfFloat } from '../extras/DataUtils.js';
+import { StaticDrawUsage, FloatType } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/constants.js';
+import { fromHalfFloat, toHalfFloat } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/extras/DataUtils.js';
 
-// ── External libraries (must be imported and used) ───────────────────────────
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -39,453 +33,465 @@ let _id = 0;
 
 // Default options mirror of the original BufferAttribute.js defaults.
 const _DEFAULTS = {
-	normalized: false,
-	usage: StaticDrawUsage,
+    normalized: false,
+    usage: StaticDrawUsage,
 };
 
 const BufferAttributeUtils = {
 
-	// 001_MathUtils bridge: denormalize a normalized value back to its integer range.
-	denormalize: ( value, array ) => {
+    // 001_MathUtils bridge: denormalize a normalized value back to its integer range.
+    denormalize: ( value, array ) => {
 
-		return MathUtils.denormalize( value, array );
+        return MathUtils.denormalize( value, array );
 
-	},
+    },
 
-	// 001_MathUtils bridge: normalize an integer value into the [ -1, 1 ] or [ 0, 1 ] range.
-	normalize: ( value, array ) => {
+    // 001_MathUtils bridge: normalize an integer value into the [ -1, 1 ] or [ 0, 1 ] range.
+    normalize: ( value, array ) => {
 
-		return MathUtils.normalize( value, array );
+        return MathUtils.normalize( value, array );
 
-	},
+    },
 
-	// 001_MathUtils bridge: clamp an index into the valid attribute range.
-	clampIndex: ( index, count ) => {
+    // 001_MathUtils bridge: clamp a scalar to a safe attribute range.
+    clampScalar: ( value, min, max ) => {
 
-		return MathUtils.clamp( Math.floor( index ), 0, count - 1 );
+        return MathUtils.clamp( value, min, max );
 
-	},
+    },
 
-	// gl-matrix bridge: pack the attribute header (itemSize, count, normalized, version) into a vec4.
-	packHeaderVec4: ( out, itemSize, count, normalized, version ) => {
+    // 001_MathUtils bridge: generate a UUID for anonymous attributes.
+    generateUUID: () => {
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set( out || _scratchVec4, itemSize, count, normalized ? 1 : 0, version );
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+        return MathUtils.generateUUID();
 
-	},
+    },
 
-	// bitecs bridge: register a BufferAttribute as a SoA component column.
-	registerComponent: ( name, count, itemSize ) => {
+    // gl-matrix bridge: pack the attribute header (itemSize, count, normalized, version) into a vec4.
+    packHeaderToVec4: ( out, itemSize, count, normalized, version ) => {
 
-		const column = new Float64Array( count * itemSize );
-		return { name, column, itemSize, count };
+        glMatrix.mat4.identity( _scratchMat4 );
+        glMatrix.vec4.set( out || _scratchVec4, itemSize, count, normalized ? 1 : 0, version );
+        glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
+        return out || _scratchVec4;
 
-	},
+    },
 
-	// double.js bridge: high-precision total byte length of the attribute.
-	totalBytes: ( count, itemSize, bytesPerElement = 4 ) => {
+    // double.js bridge: high-precision total byte length of the attribute array.
+    totalBytes: ( array, itemSize, count ) => {
 
-		const c = new Double( count );
-		const i = new Double( itemSize );
-		const b = new Double( bytesPerElement );
-		return c.mul( i ).mul( b ).valueOf();
+        let total = new Double( array.BYTES_PER_ELEMENT || 4 );
+        total.mul( itemSize ).mul( count );
+        return total.valueOf();
 
-	},
+    },
 
-	// DataUtils bridge: FP32 -> FP16 half-float conversion.
-	toHalfFloat: ( value ) => {
+    // bitecs bridge: register an attribute as a SoA component column.
+    registerComponent: ( name, count, itemSize ) => {
 
-		return toHalfFloat( value );
+        const column = new Float32Array( count * itemSize );
+        return { name, column, itemSize, count };
 
-	},
+    },
 
-	// DataUtils bridge: FP16 -> FP32 half-float conversion.
-	fromHalfFloat: ( value ) => {
+    // simplex-noise bridge: procedural noise for attribute generators.
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
 
-		return fromHalfFloat( value );
-
-	},
-
-	// simplex-noise bridge: fill an attribute array with procedural 2D / 3D noise.
-	fillWithNoise: ( out, count, itemSize, scale = 0.1, seed = 0 ) => {
-
-		let i = 0;
-		for ( let v = 0; v < count; v ++ ) {
-
-			for ( let c = 0; c < itemSize; c ++ ) {
-
-				out[ i ++ ] = _noise3D( v * scale + seed, c * scale + seed, seed );
-
-			}
-
-		}
-
-		return out;
-
-	},
-
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
-
-	bitecs,
-	glMatrix,
-	Double,
-	Vector2,
-	Vector3,
-	Vector4,
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
-class BufferAttribute extends EventDispatcher {
+class BufferAttribute {
 
-	/**
-	 * @param {TypedArray} array - The array holding the attribute data.
-	 * @param {number} itemSize - The item size.
-	 * @param {boolean} [normalized=false] - Whether the data are normalized or not.
-	 */
-	constructor( array, itemSize, normalized = false ) {
+    constructor( array, itemSize, normalized = false ) {
 
-		super();
+        if ( Array.isArray( array ) ) {
 
-		if ( Array.isArray( array ) ) {
+            throw new TypeError( 'BufferAttribute: array should be a Typed Array.' );
 
-			throw new TypeError( 'THREE.BufferAttribute: array should be a Typed Array.' );
+        }
 
-		}
+        if ( itemSize === undefined ) {
 
-		this.isBufferAttribute = true;
+            throw new Error( 'BufferAttribute: itemSize is required.' );
 
-		Object.defineProperty( this, 'id', { value: _id ++ } );
+        }
 
-		this.name = '';
+        this.isBufferAttribute = true;
 
-		this.array = array;
-		this.itemSize = itemSize;
-		this.count = array !== undefined ? array.length / itemSize : 0;
-		this.normalized = normalized;
+        Object.defineProperty( this, 'id', { value: _id ++ } );
 
-		this.usage = StaticDrawUsage;
-		this.updateRanges = [];
-		this.gpuType = FloatType;
+        this.name = '';
 
-		this.version = 0;
+        this.array = array;
+        this.itemSize = itemSize;
+        this.count = array !== undefined ? array.length / itemSize : 0;
+        this.normalized = normalized;
 
-	}
+        this.usage = _DEFAULTS.usage;
 
-	set needsUpdate( value ) {
+        this.updateRanges = [];
+        this.gpuType = FloatType;
 
-		if ( value === true ) this.version ++;
+        this.version = 0;
 
-	}
+    }
 
-	setUsage( value ) {
+    get needsUpdate() {
 
-		this.usage = value;
-		return this;
+        return this.version > 0;
 
-	}
+    }
 
-	addUpdateRange( start, count ) {
+    set needsUpdate( value ) {
 
-		this.updateRanges.push( { start, count } );
+        if ( value === true ) this.version ++;
 
-	}
+    }
 
-	clearUpdateRanges() {
+    onUploadCallback() {}
 
-		this.updateRanges.length = 0;
+    setUsage( value ) {
 
-	}
+        this.usage = value;
+        return this;
 
-	updateRange( start, count ) {
+    }
 
-		console.warn( 'THREE.BufferAttribute: updateRange() is deprecated. Use addUpdateRange() and clearUpdateRanges() instead.' );
-		this.addUpdateRange( start, count );
+    addUpdateRange( start, count ) {
 
-	}
+        this.updateRanges.push( { start, count } );
 
-	// ── Vector bridging helpers (fromBufferAttribute / toBufferAttribute) ─────
-	// These mirror the r185 source using the local 002_Vector2, 003_Vector3,
-	// and 016_Vector4 DeepSeek-chat classes.
+    }
 
-	applyMatrix4( matrix ) {
+    clearUpdateRanges() {
 
-		const array = this.array;
-		const count = this.count;
-		const itemSize = this.itemSize;
+        this.updateRanges.length = 0;
 
-		if ( itemSize !== 3 ) {
+    }
 
-			throw new Error( 'THREE.BufferAttribute.applyMatrix4(): itemSize must be 3.' );
+    copy( source ) {
 
-		}
+        this.name = source.name;
+        this.array = new source.array.constructor( source.array );
+        this.itemSize = source.itemSize;
+        this.count = source.count;
+        this.normalized = source.normalized;
 
-		for ( let i = 0; i < count; i ++ ) {
+        this.usage = source.usage;
+        this.gpuType = source.gpuType;
 
-			_vector.fromBufferAttribute( this, i );
-			_vector.applyMatrix4( matrix );
-			_vector.toArray( array, i * itemSize );
+        return this;
 
-		}
+    }
 
-		return this;
+    copyAt( index1, attribute, index2 ) {
 
-	}
+        index1 *= this.itemSize;
+        index2 *= attribute.itemSize;
 
-	applyMatrix3( matrix ) {
+        for ( let i = 0, l = this.itemSize; i < l; i ++ ) {
 
-		const array = this.array;
-		const count = this.count;
-		const itemSize = this.itemSize;
+            this.array[ index1 + i ] = attribute.array[ index2 + i ];
 
-		if ( itemSize !== 3 && itemSize !== 2 ) {
+        }
 
-			throw new Error( 'THREE.BufferAttribute.applyMatrix3(): itemSize must be 2 or 3.' );
+        return this;
 
-		}
+    }
 
-		for ( let i = 0; i < count; i ++ ) {
+    copyArray( array ) {
 
-			if ( itemSize === 3 ) {
+        this.array.set( array );
+        return this;
 
-				_vector.fromBufferAttribute( this, i );
-				_vector.applyMatrix3( matrix );
-				_vector.toArray( array, i * itemSize );
+    }
 
-			} else {
+    applyMatrix3( m ) {
 
-				_vector2.fromBufferAttribute( this, i );
-				_vector2.applyMatrix3( matrix );
-				_vector2.toArray( array, i * itemSize );
+        if ( this.itemSize === 2 ) {
 
-			}
+            for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-		}
+                _vector2.fromBufferAttribute( this, i );
+                _vector2.applyMatrix3( m );
 
-		return this;
+                this.setXY( i, _vector2.x, _vector2.y );
 
-	}
+            }
 
-	transformDirection( matrix ) {
+        } else if ( this.itemSize === 3 ) {
 
-		const array = this.array;
-		const count = this.count;
-		const itemSize = this.itemSize;
+            for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-		if ( itemSize !== 3 ) {
+                _vector.fromBufferAttribute( this, i );
+                _vector.applyMatrix3( m );
 
-			throw new Error( 'THREE.BufferAttribute.transformDirection(): itemSize must be 3.' );
+                this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-		}
+            }
 
-		for ( let i = 0; i < count; i ++ ) {
+        }
 
-			_vector.fromBufferAttribute( this, i );
-			_vector.transformDirection( matrix );
-			_vector.toArray( array, i * itemSize );
+        return this;
 
-		}
+    }
 
-		return this;
+    applyMatrix4( m ) {
 
-	}
+        for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-	// ── Core accessors ────────────────────────────────────────────────────────
+            _vector.fromBufferAttribute( this, i );
 
-	getX( index ) {
+            _vector.applyMatrix4( m );
 
-		return this.array[ index * this.itemSize ];
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-	}
+        }
 
-	setX( index, x ) {
+        return this;
 
-		this.array[ index * this.itemSize ] = x;
-		return this;
+    }
 
-	}
+    applyNormalMatrix( m ) {
 
-	getY( index ) {
+        for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-		return this.array[ index * this.itemSize + 1 ];
+            _vector.fromBufferAttribute( this, i );
 
-	}
+            _vector.applyNormalMatrix( m );
 
-	setY( index, y ) {
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-		this.array[ index * this.itemSize + 1 ] = y;
-		return this;
+        }
 
-	}
+        return this;
 
-	getZ( index ) {
+    }
 
-		return this.array[ index * this.itemSize + 2 ];
+    transformDirection( m ) {
 
-	}
+        for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-	setZ( index, z ) {
+            _vector.fromBufferAttribute( this, i );
 
-		this.array[ index * this.itemSize + 2 ] = z;
-		return this;
+            _vector.transformDirection( m );
 
-	}
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-	getW( index ) {
+        }
 
-		return this.array[ index * this.itemSize + 3 ];
+        return this;
 
-	}
+    }
 
-	setW( index, w ) {
+    set( value, offset ) {
 
-		this.array[ index * this.itemSize + 3 ] = w;
-		return this;
+        if ( Array.isArray( value ) ) {
 
-	}
+            throw new TypeError( 'BufferAttribute: value should be a Typed Array.' );
 
-	setXY( index, x, y ) {
+        }
 
-		index *= this.itemSize;
+        this.array.set( value, offset );
+        return this;
 
-		this.array[ index + 0 ] = x;
-		this.array[ index + 1 ] = y;
+    }
 
-		return this;
+    getX( index ) {
 
-	}
+        let x = this.array[ index * this.itemSize ];
 
-	setXYZ( index, x, y, z ) {
+        if ( this.normalized ) x = MathUtils.denormalize( x, this.array );
 
-		index *= this.itemSize;
+        return x;
 
-		this.array[ index + 0 ] = x;
-		this.array[ index + 1 ] = y;
-		this.array[ index + 2 ] = z;
+    }
 
-		return this;
+    setX( index, x ) {
 
-	}
+        if ( this.normalized ) x = MathUtils.normalize( x, this.array );
 
-	setXYZW( index, x, y, z, w ) {
+        this.array[ index * this.itemSize ] = x;
 
-		index *= this.itemSize;
+        return this;
 
-		this.array[ index + 0 ] = x;
-		this.array[ index + 1 ] = y;
-		this.array[ index + 2 ] = z;
-		this.array[ index + 3 ] = w;
+    }
 
-		return this;
+    getY( index ) {
 
-	}
+        let y = this.array[ index * this.itemSize + 1 ];
 
-	// ── Copy / clone / serialization ─────────────────────────────────────────
+        if ( this.normalized ) y = MathUtils.denormalize( y, this.array );
 
-	copy( source ) {
+        return y;
 
-		this.name = source.name;
-		this.array = new source.array.constructor( source.array );
-		this.itemSize = source.itemSize;
-		this.count = source.count;
-		this.normalized = source.normalized;
+    }
 
-		this.usage = source.usage;
-		this.gpuType = source.gpuType;
+    setY( index, y ) {
 
-		return this;
+        if ( this.normalized ) y = MathUtils.normalize( y, this.array );
 
-	}
+        this.array[ index * this.itemSize + 1 ] = y;
 
-	clone() {
+        return this;
 
-		return new this.constructor( this.array, this.itemSize ).copy( this );
+    }
 
-	}
+    getZ( index ) {
 
-	toJSON( data ) {
+        let z = this.array[ index * this.itemSize + 2 ];
 
-		const array = this.array;
+        if ( this.normalized ) z = MathUtils.denormalize( z, this.array );
 
-		if ( array.buffer !== undefined && array.buffer._uuid === undefined ) {
+        return z;
 
-			array.buffer._uuid = MathUtils.generateUUID();
+    }
 
-		}
+    setZ( index, z ) {
 
-		if ( data.arrayBuffers === undefined ) {
+        if ( this.normalized ) z = MathUtils.normalize( z, this.array );
 
-			data.arrayBuffers = {};
+        this.array[ index * this.itemSize + 2 ] = z;
 
-		}
+        return this;
 
-		if ( array.buffer !== undefined && data.arrayBuffers[ array.buffer._uuid ] === undefined ) {
+    }
 
-			data.arrayBuffers[ array.buffer._uuid ] = Array.from( new Uint32Array( array.buffer ) );
+    getW( index ) {
 
-		}
+        let w = this.array[ index * this.itemSize + 3 ];
 
-		return {
-			itemSize: this.itemSize,
-			type: array.constructor.name,
-			array: Array.from( array ),
-			normalized: this.normalized
-		};
+        if ( this.normalized ) w = MathUtils.denormalize( w, this.array );
 
-	}
+        return w;
 
-	// ── Convenience accessors backed by the utility surface above ─────────────
+    }
 
-	packToVec4( out ) {
+    setW( index, w ) {
 
-		return BufferAttributeUtils.packHeaderVec4(
-			out,
-			this.itemSize,
-			this.count,
-			this.normalized,
-			this.version
-		);
+        if ( this.normalized ) w = MathUtils.normalize( w, this.array );
 
-	}
+        this.array[ index * this.itemSize + 3 ] = w;
 
-	asBitecsComponent( name ) {
+        return this;
 
-		return BufferAttributeUtils.registerComponent( name, this.count, this.itemSize );
+    }
 
-	}
+    setXY( index, x, y ) {
 
-	getTotalBytes( bytesPerElement = 4 ) {
+        index *= this.itemSize;
 
-		return BufferAttributeUtils.totalBytes( this.count, this.itemSize, bytesPerElement );
+        if ( this.normalized ) {
 
-	}
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
 
-	fillWithNoise( scale, seed ) {
+        }
 
-		BufferAttributeUtils.fillWithNoise( this.array, this.count, this.itemSize, scale, seed );
-		this.needsUpdate = true;
-		return this;
+        this.array[ index + 0 ] = x;
+        this.array[ index + 1 ] = y;
 
-	}
+        return this;
 
-	get uuid() {
+    }
 
-		if ( this._uuid === undefined ) {
+    setXYZ( index, x, y, z ) {
 
-			this._uuid = MathUtils.generateUUID();
+        index *= this.itemSize;
 
-		}
+        if ( this.normalized ) {
 
-		return this._uuid;
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
+            z = MathUtils.normalize( z, this.array );
 
-	}
+        }
+
+        this.array[ index + 0 ] = x;
+        this.array[ index + 1 ] = y;
+        this.array[ index + 2 ] = z;
+
+        return this;
+
+    }
+
+    setXYZW( index, x, y, z, w ) {
+
+        index *= this.itemSize;
+
+        if ( this.normalized ) {
+
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
+            z = MathUtils.normalize( z, this.array );
+            w = MathUtils.normalize( w, this.array );
+
+        }
+
+        this.array[ index + 0 ] = x;
+        this.array[ index + 1 ] = y;
+        this.array[ index + 2 ] = z;
+        this.array[ index + 3 ] = w;
+
+        return this;
+
+    }
+
+    onUpload( callback ) {
+
+        this.onUploadCallback = callback;
+        return this;
+
+    }
+
+    clone() {
+
+        return new this.constructor( this.array, this.itemSize ).copy( this );
+
+    }
+
+    toJSON() {
+
+        const data = {
+            itemSize: this.itemSize,
+            type: this.array.constructor.name,
+            array: Array.from( this.array ),
+            normalized: this.normalized,
+        };
+
+        if ( this.name !== '' ) data.name = this.name;
+        if ( this.usage !== _DEFAULTS.usage ) data.usage = this.usage;
+
+        return data;
+
+    }
+
+    // Convenience accessors backed by the utility surface above.
+    packHeaderToVec4( out ) {
+
+        return BufferAttributeUtils.packHeaderToVec4( out, this.itemSize, this.count, this.normalized, this.version );
+
+    }
+
+    getTotalBytes() {
+
+        return BufferAttributeUtils.totalBytes( this.array, this.itemSize, this.count );
+
+    }
+
+    asBitecsComponent( name ) {
+
+        return BufferAttributeUtils.registerComponent( name, this.count, this.itemSize );
+
+    }
 
 }
 
 BufferAttribute.Utils = BufferAttributeUtils;
 
 export default BufferAttribute;
-export { BufferAttributeUtils };
