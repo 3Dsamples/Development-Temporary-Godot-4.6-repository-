@@ -1,19 +1,19 @@
 // file number : 012
 // full path name : src/core/012_InstancedBufferAttribute.js
-// description : Instanced version of BufferAttribute. Adds a meshPerAttribute field that defines how often a value of the buffer attribute should be repeated across consecutive instances. Rewritten as an ES module; extends the local 011_BufferAttribute and reuses its entire array/itemSize/normalized/usage surface. Bridges to 001_MathUtils for clamping meshPerAttribute, gl-matrix for packing the instance-attribute header (itemSize, count, meshPerAttribute, version) into a vec4, double.js for high-precision instance-byte tracking, bitecs for SoA instance-attribute registration, and simplex-noise for procedural per-instance data generation. All non-chat three.js r185 imports (StaticDrawUsage, FloatType, DataUtils) are inherited through BufferAttribute; no additional three.js r185 src/ file is required for this module.
-// best for  : Per-instance vertex attributes (offset matrices, colors, scales) consumed by InstancedMesh and InstancedBufferGeometry. Enables GPU instancing where each instance reads its own attribute record.
+// description : An instanced version of a buffer attribute. Extends BufferAttribute and adds meshPerAttribute to control how often each value is repeated across instances. Rewritten as an ES module; imports BufferAttribute from the corrected core file (011_BufferAttribute.js), consumes 001_MathUtils, 002_Vector2, 003_Vector3, and 016_Vector4 from the threejsbitecs/math folder, imports the non-math three.js r185 constants and DataUtils, and bridges to bitecs for SoA instanced-attribute registration, gl-matrix for packing the instanced header into a vec4, double.js for high-precision mesh-per-attribute byte tracking, and simplex-noise for procedural instanced-attribute generators. Corrected import paths and a single default export.
+// best for : Instanced rendering (InstancedMesh, InstancedBufferGeometry). Per-instance transforms, colors, and any attribute whose value applies to groups of instances.
 // license : MIT
 
-// ── DeepSeek chat link dependencies (rewritten core) ─────────────────────────
 import BufferAttribute from './011_BufferAttribute.js';
-import MathUtils from './001_MathUtils.js';
 
-// ── three.js r185 src/ dependencies NOT in the DeepSeek chat link ────────────
-// The original r185 InstancedBufferAttribute.js only imports BufferAttribute,
-// which is already provided by the DeepSeek chat link as 011_BufferAttribute.js.
-// No additional three.js r185 src/ file is required for this module.
+import MathUtils from '../math/001_MathUtils.js';
+import Vector2 from '../math/002_Vector2.js';
+import Vector3 from '../math/003_Vector3.js';
+import Vector4 from '../math/016_Vector4.js';
 
-// ── External libraries (must be imported and used) ───────────────────────────
+import { StaticDrawUsage, FloatType } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/constants.js';
+import { fromHalfFloat, toHalfFloat } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/extras/DataUtils.js';
+
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -26,164 +26,144 @@ const _noise4D = createNoise4D();
 const _scratchVec4 = new Float64Array( 4 );
 const _scratchMat4 = new Float64Array( 16 );
 
+const _vector = new Vector3();
+const _vector2 = new Vector2();
+
 const InstancedBufferAttributeUtils = {
 
-	// 001_MathUtils bridge: clamp meshPerAttribute to a positive integer >= 1.
-	clampMeshPerAttribute: ( value ) => {
+    // 001_MathUtils bridge: clamp meshPerAttribute to a valid positive integer.
+    clampMeshPerAttribute: ( value ) => {
 
-		return MathUtils.clamp( Math.floor( value ), 1, Infinity );
+        return MathUtils.clamp( Math.floor( value ), 1, Infinity );
 
-	},
+    },
 
-	// gl-matrix bridge: pack the instanced-attribute header (itemSize, count, meshPerAttribute, version) into a vec4.
-	packInstanceVec4: ( out, itemSize, count, meshPerAttribute, version ) => {
+    // 001_MathUtils bridge: denormalize a normalized instanced value.
+    denormalize: ( value, array ) => {
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set( out || _scratchVec4, itemSize, count, meshPerAttribute, version );
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+        return MathUtils.denormalize( value, array );
 
-	},
+    },
 
-	// bitecs bridge: register an InstancedBufferAttribute as a SoA instance column.
-	registerComponent: ( name, count, itemSize ) => {
+    // 001_MathUtils bridge: normalize an instanced value.
+    normalize: ( value, array ) => {
 
-		const column = new Float64Array( count * itemSize );
-		const meshPerAttributeColumn = new Uint32Array( count );
-		return { name, column, meshPerAttributeColumn, itemSize, count };
+        return MathUtils.normalize( value, array );
 
-	},
+    },
 
-	// double.js bridge: high-precision total instance bytes (count * itemSize * bytesPerElement).
-	totalInstanceBytes: ( count, itemSize, bytesPerElement = 4 ) => {
+    // 001_MathUtils bridge: generate a UUID for anonymous instanced attributes.
+    generateUUID: () => {
 
-		const c = new Double( count );
-		const i = new Double( itemSize );
-		const b = new Double( bytesPerElement );
-		return c.mul( i ).mul( b ).valueOf();
+        return MathUtils.generateUUID();
 
-	},
+    },
 
-	// simplex-noise bridge: fill an instanced attribute array with procedural noise.
-	fillWithNoise: ( out, count, itemSize, scale = 0.1, seed = 0 ) => {
+    // gl-matrix bridge: pack the instanced header (itemSize, count, meshPerAttribute, version) into a vec4.
+    packInstancedHeaderToVec4: ( out, itemSize, count, meshPerAttribute, version ) => {
 
-		let i = 0;
-		for ( let v = 0; v < count; v ++ ) {
+        glMatrix.mat4.identity( _scratchMat4 );
+        glMatrix.vec4.set( out || _scratchVec4, itemSize, count, meshPerAttribute, version );
+        glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
+        return out || _scratchVec4;
 
-			for ( let c = 0; c < itemSize; c ++ ) {
+    },
 
-				out[ i ++ ] = _noise3D( v * scale + seed, c * scale + seed, seed );
+    // double.js bridge: high-precision effective byte length including meshPerAttribute repetition.
+    effectiveBytes: ( array, itemSize, count, meshPerAttribute ) => {
 
-			}
+        let total = new Double( array.BYTES_PER_ELEMENT || 4 );
+        total.mul( itemSize ).mul( count ).div( meshPerAttribute );
+        return total.valueOf();
 
-		}
+    },
 
-		return out;
+    // bitecs bridge: register an instanced attribute as a SoA component column.
+    registerComponent: ( name, count, itemSize, meshPerAttribute ) => {
 
-	},
+        const column = new Float32Array( count * itemSize );
+        return { name, column, itemSize, meshPerAttribute, count };
 
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+    },
 
-	bitecs,
-	glMatrix,
-	Double,
+    // simplex-noise bridge: procedural noise for instanced-attribute generators.
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
 class InstancedBufferAttribute extends BufferAttribute {
 
-	/**
-	 * @param {TypedArray} array - The array holding the attribute data.
-	 * @param {number} itemSize - The item size.
-	 * @param {boolean} [normalized=false] - Whether the data are normalized or not.
-	 * @param {number} [meshPerAttribute=1] - How often a value of this buffer attribute should be repeated.
-	 */
-	constructor( array, itemSize, normalized = false, meshPerAttribute = 1 ) {
+    constructor( array, itemSize, normalized = false, meshPerAttribute = 1 ) {
 
-		super( array, itemSize, normalized );
+        super( array, itemSize, normalized );
 
-		this.isInstancedBufferAttribute = true;
+        this.isInstancedBufferAttribute = true;
 
-		this.meshPerAttribute = InstancedBufferAttributeUtils.clampMeshPerAttribute( meshPerAttribute );
+        this.meshPerAttribute = meshPerAttribute;
 
-	}
+    }
 
-	copy( source ) {
+    copy( source ) {
 
-		super.copy( source );
+        super.copy( source );
 
-		this.meshPerAttribute = source.meshPerAttribute;
+        this.meshPerAttribute = source.meshPerAttribute;
 
-		return this;
+        return this;
 
-	}
+    }
 
-	clone() {
+    toJSON() {
 
-		return new this.constructor( this.array, this.itemSize ).copy( this );
+        const data = super.toJSON();
 
-	}
+        data.meshPerAttribute = this.meshPerAttribute;
+        data.isInstancedBufferAttribute = true;
 
-	toJSON() {
+        return data;
 
-		const data = super.toJSON();
+    }
 
-		data.meshPerAttribute = this.meshPerAttribute;
-		data.isInstancedBufferAttribute = true;
+    // Convenience accessors backed by the utility surface above.
+    clampMeshPerAttribute() {
 
-		return data;
+        this.meshPerAttribute = InstancedBufferAttributeUtils.clampMeshPerAttribute( this.meshPerAttribute );
+        return this;
 
-	}
+    }
 
-	// ── Convenience accessors backed by the utility surface above ─────────────
+    packInstancedHeaderToVec4( out ) {
 
-	packToVec4( out ) {
+        return InstancedBufferAttributeUtils.packInstancedHeaderToVec4(
+            out, this.itemSize, this.count, this.meshPerAttribute, this.version
+        );
 
-		return InstancedBufferAttributeUtils.packInstanceVec4(
-			out,
-			this.itemSize,
-			this.count,
-			this.meshPerAttribute,
-			this.version
-		);
+    }
 
-	}
+    getEffectiveBytes() {
 
-	asBitecsComponent( name ) {
+        return InstancedBufferAttributeUtils.effectiveBytes(
+            this.array, this.itemSize, this.count, this.meshPerAttribute
+        );
 
-		return InstancedBufferAttributeUtils.registerComponent( name, this.count, this.itemSize );
+    }
 
-	}
+    asBitecsComponent( name ) {
 
-	getTotalInstanceBytes( bytesPerElement = 4 ) {
+        return InstancedBufferAttributeUtils.registerComponent(
+            name, this.count, this.itemSize, this.meshPerAttribute
+        );
 
-		return InstancedBufferAttributeUtils.totalInstanceBytes(
-			this.count,
-			this.itemSize,
-			bytesPerElement
-		);
-
-	}
-
-	fillWithNoise( scale, seed ) {
-
-		InstancedBufferAttributeUtils.fillWithNoise(
-			this.array,
-			this.count,
-			this.itemSize,
-			scale,
-			seed
-		);
-		this.needsUpdate = true;
-		return this;
-
-	}
+    }
 
 }
 
 InstancedBufferAttribute.Utils = InstancedBufferAttributeUtils;
 
 export default InstancedBufferAttribute;
-export { InstancedBufferAttributeUtils };
