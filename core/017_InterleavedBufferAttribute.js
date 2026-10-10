@@ -1,21 +1,18 @@
 // file number : 017
 // full path name : src/core/017_InterleavedBufferAttribute.js
-// description : An alternative version of a buffer attribute with interleaved data. Interleaved attributes share a common interleaved data storage (InterleavedBuffer) and refer with different offsets into the buffer. Rewritten as an ES module; consumes 011_BufferAttribute, 002_Vector2, 003_Vector3, and 016_Vector4 from the DeepSeek chat link for attribute and vector bridging. Bridges to 001_MathUtils for denormalize / normalize, gl-matrix for packing the attribute header (itemSize, offset, normalized, version) into a vec4, double.js for high-precision byte-offset tracking, bitecs for SoA interleaved-attribute registration, and simplex-noise for procedural attribute generators. All non-chat three.js r185 imports (log from utils.js) are imported explicitly so the module remains self-contained.
-// best for  : Sharing a single interleaved buffer across multiple attributes (position, normal, uv, color) where each attribute reads from a different offset. Consumed by BufferGeometry when attributes are backed by an InterleavedBuffer.
+// description : An alternative version of a buffer attribute with interleaved data. Interleaved attributes share a common interleaved data storage (InterleavedBuffer) and refer with different offsets into the buffer. Rewritten as an ES module; consumes 011_BufferAttribute from the core folder, plus 001_MathUtils, 002_Vector2, 003_Vector3, and 016_Vector4 from the threejsbitecs/math folder for attribute and vector bridging. Bridges to 001_MathUtils for denormalize / normalize, gl-matrix for packing the attribute header (itemSize, offset, normalized, version) into a vec4, double.js for high-precision byte-offset tracking, bitecs for SoA interleaved-attribute registration, and simplex-noise for procedural attribute generators. All non-math three.js r185 imports (log from utils.js) are imported explicitly so the module remains self-contained. Corrected import paths and a single default export.
+// best for : Sharing a single interleaved buffer across multiple attributes (position, normal, uv, color) where each attribute reads from a different offset. Consumed by BufferGeometry when attributes are backed by an InterleavedBuffer.
 // license : MIT
 
-// ── DeepSeek chat link dependencies (rewritten core) ─────────────────────────
 import BufferAttribute from './011_BufferAttribute.js';
-import MathUtils from './001_MathUtils.js';
+
+import MathUtils from '../math/001_MathUtils.js';
 import Vector2 from '../math/002_Vector2.js';
 import Vector3 from '../math/003_Vector3.js';
 import Vector4 from '../math/016_Vector4.js';
 
-// ── three.js r185 src/ dependencies NOT in the DeepSeek chat link ────────────
-// The original r185 InterleavedBufferAttribute.js imports log from ../utils.js.
 import { log } from 'https://cdn.jsdelivr.net/npm/three@0.185.0/src/utils.js';
 
-// ── External libraries (must be imported and used) ───────────────────────────
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -33,518 +30,446 @@ const _vector = new Vector3();
 
 const InterleavedBufferAttributeUtils = {
 
-	// 001_MathUtils bridge: denormalize a normalized value back to its integer range.
-	denormalize: ( value, array ) => MathUtils.denormalize( value, array ),
+    // 001_MathUtils bridge: denormalize a normalized value back to its integer range.
+    denormalize: ( value, array ) => MathUtils.denormalize( value, array ),
 
-	// 001_MathUtils bridge: normalize an integer value into the [ -1, 1 ] or [ 0, 1 ] range.
-	normalize: ( value, array ) => MathUtils.normalize( value, array ),
+    // 001_MathUtils bridge: normalize an integer value into the [ -1, 1 ] or [ 0, 1 ] range.
+    normalize: ( value, array ) => MathUtils.normalize( value, array ),
 
-	// gl-matrix bridge: pack the interleaved-attribute header (itemSize, offset, normalized, version) into a vec4.
-	packHeaderVec4: ( out, itemSize, offset, normalized, version ) => {
+    // 001_MathUtils bridge: clamp an interleaved offset to a valid non-negative integer.
+    clampOffset: ( value ) => MathUtils.clamp( Math.floor( value ), 0, Infinity ),
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set( out || _scratchVec4, itemSize, offset, normalized ? 1 : 0, version );
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+    // 001_MathUtils bridge: generate a UUID for anonymous interleaved attributes.
+    generateUUID: () => MathUtils.generateUUID(),
 
-	},
+    // gl-matrix bridge: pack the interleaved-attribute header (itemSize, offset, normalized, version) into a vec4.
+    packHeaderVec4: ( out, itemSize, offset, normalized, version ) => {
 
-	// bitecs bridge: register an InterleavedBufferAttribute as a SoA component column.
-	registerComponent: ( name, count, itemSize ) => {
+        glMatrix.mat4.identity( _scratchMat4 );
+        glMatrix.vec4.set( out || _scratchVec4, itemSize, offset, normalized ? 1 : 0, version );
+        glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
+        return out || _scratchVec4;
 
-		const column = new Float64Array( count * itemSize );
-		return { name, column, itemSize, count };
+    },
 
-	},
+    // bitecs bridge: register an interleaved attribute as a SoA component column.
+    registerComponent: ( name, count, itemSize, offset ) => {
 
-	// double.js bridge: high-precision byte offset for a given vertex index.
-	byteOffset: ( index, offset, itemSize, bytesPerElement = 4 ) => {
+        const column = new Float32Array( count * itemSize );
+        return { name, column, itemSize, offset, count };
 
-		const i = new Double( index );
-		const o = new Double( offset );
-		const s = new Double( itemSize );
-		const b = new Double( bytesPerElement );
-		return i.mul( s ).add( o ).mul( b ).valueOf();
+    },
 
-	},
+    // double.js bridge: high-precision byte offset for a given vertex index.
+    byteOffset: ( index, offset, stride, bytesPerElement = 4 ) => {
 
-	// double.js bridge: high-precision total byte length of the attribute.
-	totalBytes: ( count, itemSize, bytesPerElement = 4 ) => {
+        const i = new Double( index );
+        const o = new Double( offset );
+        const s = new Double( stride );
+        const b = new Double( bytesPerElement );
+        return i.mul( s ).add( o ).mul( b ).valueOf();
 
-		const c = new Double( count );
-		const i = new Double( itemSize );
-		const b = new Double( bytesPerElement );
-		return c.mul( i ).mul( b ).valueOf();
+    },
 
-	},
+    // double.js bridge: high-precision total byte length of the interleaved attribute.
+    totalBytes: ( array, itemSize, count ) => {
 
-	// simplex-noise bridge: fill an interleaved attribute array with procedural 2D / 3D noise.
-	fillWithNoise: ( out, count, itemSize, scale = 0.1, seed = 0 ) => {
+        let total = new Double( array.BYTES_PER_ELEMENT || 4 );
+        total.mul( itemSize ).mul( count );
+        return total.valueOf();
 
-		let i = 0;
-		for ( let v = 0; v < count; v ++ ) {
+    },
 
-			for ( let c = 0; c < itemSize; c ++ ) {
+    // simplex-noise bridge: fill a position attribute array with procedural 3D noise.
+    fillWithNoise: ( out, vertexCount, itemSize, scale = 0.1, seed = 0 ) => {
 
-				out[ i ++ ] = _noise3D( v * scale + seed, c * scale + seed, seed );
+        let i = 0;
+        for ( let v = 0; v < vertexCount; v ++ ) {
 
-			}
+            for ( let c = 0; c < itemSize; c ++ ) {
 
-		}
+                out[ i ++ ] = _noise3D( v * scale + seed, c * scale + seed, seed );
 
-		return out;
+            }
 
-	},
+        }
+        return out;
 
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+    },
 
-	bitecs,
-	glMatrix,
-	Double,
-	Vector2,
-	Vector3,
-	Vector4,
+    // simplex-noise bridge: procedural noise helpers.
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
 class InterleavedBufferAttribute {
 
-	/**
-	 * @param {InterleavedBuffer} interleavedBuffer - The buffer holding the interleaved data.
-	 * @param {number} itemSize - The item size.
-	 * @param {number} offset - The attribute offset into the buffer.
-	 * @param {boolean} [normalized=false] - Whether the data are normalized or not.
-	 */
-	constructor( interleavedBuffer, itemSize, offset, normalized = false ) {
+    constructor( interleavedBuffer, itemSize, offset, normalized = false ) {
 
-		this.isInterleavedBufferAttribute = true;
+        this.isInterleavedBufferAttribute = true;
 
-		this.name = '';
+        this.name = '';
 
-		this.data = interleavedBuffer;
-		this.itemSize = itemSize;
-		this.offset = offset;
+        this.data = interleavedBuffer;
+        this.itemSize = itemSize;
+        this.offset = offset;
 
-		this.normalized = normalized;
+        this.normalized = normalized;
 
-	}
+    }
 
-	get count() {
+    get count() {
 
-		return this.data.count;
+        return this.data.count;
 
-	}
+    }
 
-	get array() {
+    get array() {
 
-		return this.data.array;
+        return this.data.array;
 
-	}
+    }
 
-	set needsUpdate( value ) {
+    set needsUpdate( value ) {
 
-		this.data.needsUpdate = value;
+        this.data.needsUpdate = value;
 
-	}
+    }
 
-	/**
-	 * Applies the given 4x4 matrix to the given attribute. Only works with item size `3`.
-	 * @param {Matrix4} m - The matrix to apply.
-	 * @return {InterleavedBufferAttribute} A reference to this instance.
-	 */
-	applyMatrix4( m ) {
+    applyMatrix4( m ) {
 
-		for ( let i = 0, l = this.data.count; i < l; i ++ ) {
+        for ( let i = 0, l = this.data.count; i < l; i ++ ) {
 
-			_vector.fromBufferAttribute( this, i );
-			_vector.applyMatrix4( m );
-			this.setXYZ( i, _vector.x, _vector.y, _vector.z );
+            _vector.fromBufferAttribute( this, i );
 
-		}
+            _vector.applyMatrix4( m );
 
-		return this;
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-	}
+        }
 
-	/**
-	 * Applies the given 3x3 normal matrix to the given attribute. Only works with item size `3`.
-	 * @param {Matrix3} m - The normal matrix to apply.
-	 * @return {InterleavedBufferAttribute} A reference to this instance.
-	 */
-	applyNormalMatrix( m ) {
+        return this;
 
-		for ( let i = 0, l = this.count; i < l; i ++ ) {
+    }
 
-			_vector.fromBufferAttribute( this, i );
-			_vector.applyNormalMatrix( m );
-			this.setXYZ( i, _vector.x, _vector.y, _vector.z );
+    applyNormalMatrix( m ) {
 
-		}
+        for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-		return this;
+            _vector.fromBufferAttribute( this, i );
 
-	}
+            _vector.applyNormalMatrix( m );
 
-	/**
-	 * Applies the given 4x4 matrix to the given attribute. Only works with item size `3`
-	 * and with direction vectors.
-	 * @param {Matrix4} m - The matrix to apply.
-	 * @return {InterleavedBufferAttribute} A reference to this instance.
-	 */
-	transformDirection( m ) {
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-		for ( let i = 0, l = this.count; i < l; i ++ ) {
+        }
 
-			_vector.fromBufferAttribute( this, i );
-			_vector.transformDirection( m );
-			this.setXYZ( i, _vector.x, _vector.y, _vector.z );
+        return this;
 
-		}
+    }
 
-		return this;
+    transformDirection( m ) {
 
-	}
+        for ( let i = 0, l = this.count; i < l; i ++ ) {
 
-	// ── Core accessors ────────────────────────────────────────────────────────
+            _vector.fromBufferAttribute( this, i );
 
-	getX( index ) {
+            _vector.transformDirection( m );
 
-		let x = this.data.array[ index * this.data.stride + this.offset ];
+            this.setXYZ( i, _vector.x, _vector.y, _vector.z );
 
-		if ( this.normalized ) {
+        }
 
-			x = InterleavedBufferAttributeUtils.denormalize( x, this.array );
+        return this;
 
-		}
+    }
 
-		return x;
+    getX( index ) {
 
-	}
+        let x = this.data.array[ index * this.data.stride + this.offset ];
 
-	setX( index, x ) {
+        if ( this.normalized ) x = MathUtils.denormalize( x, this.array );
 
-		if ( this.normalized ) {
+        return x;
 
-			x = InterleavedBufferAttributeUtils.normalize( x, this.array );
+    }
 
-		}
+    setX( index, x ) {
 
-		this.data.array[ index * this.data.stride + this.offset ] = x;
+        if ( this.normalized ) x = MathUtils.normalize( x, this.array );
 
-		return this;
+        this.data.array[ index * this.data.stride + this.offset ] = x;
 
-	}
+        return this;
 
-	getY( index ) {
+    }
 
-		let y = this.data.array[ index * this.data.stride + this.offset + 1 ];
+    getY( index ) {
 
-		if ( this.normalized ) {
+        let y = this.data.array[ index * this.data.stride + this.offset + 1 ];
 
-			y = InterleavedBufferAttributeUtils.denormalize( y, this.array );
+        if ( this.normalized ) y = MathUtils.denormalize( y, this.array );
 
-		}
+        return y;
 
-		return y;
+    }
 
-	}
+    setY( index, y ) {
 
-	setY( index, y ) {
+        if ( this.normalized ) y = MathUtils.normalize( y, this.array );
 
-		if ( this.normalized ) {
+        this.data.array[ index * this.data.stride + this.offset + 1 ] = y;
 
-			y = InterleavedBufferAttributeUtils.normalize( y, this.array );
+        return this;
 
-		}
+    }
 
-		this.data.array[ index * this.data.stride + this.offset + 1 ] = y;
+    getZ( index ) {
 
-		return this;
+        let z = this.data.array[ index * this.data.stride + this.offset + 2 ];
 
-	}
+        if ( this.normalized ) z = MathUtils.denormalize( z, this.array );
 
-	getZ( index ) {
+        return z;
 
-		let z = this.data.array[ index * this.data.stride + this.offset + 2 ];
+    }
 
-		if ( this.normalized ) {
+    setZ( index, z ) {
 
-			z = InterleavedBufferAttributeUtils.denormalize( z, this.array );
+        if ( this.normalized ) z = MathUtils.normalize( z, this.array );
 
-		}
+        this.data.array[ index * this.data.stride + this.offset + 2 ] = z;
 
-		return z;
+        return this;
 
-	}
+    }
 
-	setZ( index, z ) {
+    getW( index ) {
 
-		if ( this.normalized ) {
+        let w = this.data.array[ index * this.data.stride + this.offset + 3 ];
 
-			z = InterleavedBufferAttributeUtils.normalize( z, this.array );
+        if ( this.normalized ) w = MathUtils.denormalize( w, this.array );
 
-		}
+        return w;
 
-		this.data.array[ index * this.data.stride + this.offset + 2 ] = z;
+    }
 
-		return this;
+    setW( index, w ) {
 
-	}
+        if ( this.normalized ) w = MathUtils.normalize( w, this.array );
 
-	getW( index ) {
+        this.data.array[ index * this.data.stride + this.offset + 3 ] = w;
 
-		let w = this.data.array[ index * this.data.stride + this.offset + 3 ];
+        return this;
 
-		if ( this.normalized ) {
+    }
 
-			w = InterleavedBufferAttributeUtils.denormalize( w, this.array );
+    setXY( index, x, y ) {
 
-		}
+        index = index * this.data.stride + this.offset;
 
-		return w;
+        if ( this.normalized ) {
 
-	}
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
 
-	setW( index, w ) {
+        }
 
-		if ( this.normalized ) {
+        this.data.array[ index + 0 ] = x;
+        this.data.array[ index + 1 ] = y;
 
-			w = InterleavedBufferAttributeUtils.normalize( w, this.array );
+        return this;
 
-		}
+    }
 
-		this.data.array[ index * this.data.stride + this.offset + 3 ] = w;
+    setXYZ( index, x, y, z ) {
 
-		return this;
+        index = index * this.data.stride + this.offset;
 
-	}
+        if ( this.normalized ) {
 
-	setXY( index, x, y ) {
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
+            z = MathUtils.normalize( z, this.array );
 
-		index = index * this.data.stride + this.offset;
+        }
 
-		if ( this.normalized ) {
+        this.data.array[ index + 0 ] = x;
+        this.data.array[ index + 1 ] = y;
+        this.data.array[ index + 2 ] = z;
 
-			x = InterleavedBufferAttributeUtils.normalize( x, this.array );
-			y = InterleavedBufferAttributeUtils.normalize( y, this.array );
+        return this;
 
-		}
+    }
 
-		this.data.array[ index + 0 ] = x;
-		this.data.array[ index + 1 ] = y;
+    setXYZW( index, x, y, z, w ) {
 
-		return this;
+        index = index * this.data.stride + this.offset;
 
-	}
+        if ( this.normalized ) {
 
-	setXYZ( index, x, y, z ) {
+            x = MathUtils.normalize( x, this.array );
+            y = MathUtils.normalize( y, this.array );
+            z = MathUtils.normalize( z, this.array );
+            w = MathUtils.normalize( w, this.array );
 
-		index = index * this.data.stride + this.offset;
+        }
 
-		if ( this.normalized ) {
+        this.data.array[ index + 0 ] = x;
+        this.data.array[ index + 1 ] = y;
+        this.data.array[ index + 2 ] = z;
+        this.data.array[ index + 3 ] = w;
 
-			x = InterleavedBufferAttributeUtils.normalize( x, this.array );
-			y = InterleavedBufferAttributeUtils.normalize( y, this.array );
-			z = InterleavedBufferAttributeUtils.normalize( z, this.array );
+        return this;
 
-		}
+    }
 
-		this.data.array[ index + 0 ] = x;
-		this.data.array[ index + 1 ] = y;
-		this.data.array[ index + 2 ] = z;
+    clone( data ) {
 
-		return this;
+        if ( data === undefined ) {
 
-	}
+            log( 'THREE.InterleavedBufferAttribute.clone(): Cloning an interleaved buffer attribute will de-interleave attribute arrays. Use InterleavedBuffer.clone() for cloning the interleaved buffer instead.' );
 
-	setXYZW( index, x, y, z, w ) {
+            const array = new this.array.constructor( this.count * this.itemSize );
 
-		index = index * this.data.stride + this.offset;
+            for ( let i = 0; i < this.count; i ++ ) {
 
-		if ( this.normalized ) {
+                for ( let j = 0; j < this.itemSize; j ++ ) {
 
-			x = InterleavedBufferAttributeUtils.normalize( x, this.array );
-			y = InterleavedBufferAttributeUtils.normalize( y, this.array );
-			z = InterleavedBufferAttributeUtils.normalize( z, this.array );
-			w = InterleavedBufferAttributeUtils.normalize( w, this.array );
+                    array[ i * this.itemSize + j ] = this.getComponent( i, j );
 
-		}
+                }
 
-		this.data.array[ index + 0 ] = x;
-		this.data.array[ index + 1 ] = y;
-		this.data.array[ index + 2 ] = z;
-		this.data.array[ index + 3 ] = w;
+            }
 
-		return this;
+            return new BufferAttribute( array, this.itemSize ).copy( this );
 
-	}
+        } else {
 
-	// ── Copy / clone / serialization ─────────────────────────────────────────
+            return new this.constructor( data, this.itemSize, this.offset, this.normalized );
 
-	/**
-	 * Returns a new interleaved buffer attribute with copied values from this instance.
-	 * @return {InterleavedBufferAttribute} A clone of this instance.
-	 */
-	clone( data ) {
+        }
 
-		if ( data === undefined ) {
+    }
 
-			log( 'THREE.InterleavedBufferAttribute.clone(): Cloning an interleaved buffer attribute will de-interleave buffer data.' );
+    toJSON( data ) {
 
-			const array = [];
+        if ( data === undefined ) {
 
-			for ( let i = 0; i < this.count; i ++ ) {
+            log( 'THREE.InterleavedBufferAttribute.toJSON(): Serializing an interleaved buffer attribute will de-interleave attribute arrays. Use InterleavedBuffer.toJSON() for serializing the interleaved buffer instead.' );
 
-				const index = i * this.data.stride + this.offset;
+            const array = new this.array.constructor( this.count * this.itemSize );
 
-				for ( let j = 0; j < this.itemSize; j ++ ) {
+            for ( let i = 0; i < this.count; i ++ ) {
 
-					array.push( this.data.array[ index + j ] );
+                for ( let j = 0; j < this.itemSize; j ++ ) {
 
-				}
+                    array[ i * this.itemSize + j ] = this.getComponent( i, j );
 
-			}
+                }
 
-			return new BufferAttribute( new this.array.constructor( array ), this.itemSize, this.normalized );
+            }
 
-		} else {
+            return {
+                itemSize: this.itemSize,
+                type: this.array.constructor.name,
+                array: Array.from( array ),
+                normalized: this.normalized,
+                name: this.name,
+            };
 
-			if ( data.interleavedBuffers === undefined ) {
+        } else {
 
-				data.interleavedBuffers = {};
+            const json = {
+                isInterleavedBufferAttribute: true,
+                itemSize: this.itemSize,
+                offset: this.offset,
+                normalized: this.normalized,
+            };
 
-			}
+            if ( this.name !== '' ) json.name = this.name;
 
-			if ( data.interleavedBuffers[ this.data.uuid ] === undefined ) {
+            if ( this.data.uuid !== undefined ) json.data = this.data.uuid;
+            else json.data = this.data;
 
-				data.interleavedBuffers[ this.data.uuid ] = this.data.clone( data );
+            return json;
 
-			}
+        }
 
-			return new InterleavedBufferAttribute(
-				data.interleavedBuffers[ this.data.uuid ],
-				this.itemSize,
-				this.offset,
-				this.normalized
-			);
+    }
 
-		}
+    getComponent( index, component ) {
 
-	}
+        let value = this.array[ index * this.data.stride + this.offset + component ];
 
-	toJSON( data ) {
+        if ( this.normalized ) value = MathUtils.denormalize( value, this.array );
 
-		if ( data === undefined ) {
+        return value;
 
-			log( 'THREE.InterleavedBufferAttribute.toJSON(): Serializing an interleaved buffer attribute will de-interleave buffer data.' );
+    }
 
-			const array = [];
+    setComponent( index, component, value ) {
 
-			for ( let i = 0; i < this.count; i ++ ) {
+        if ( this.normalized ) value = MathUtils.normalize( value, this.array );
 
-				const index = i * this.data.stride + this.offset;
+        this.array[ index * this.data.stride + this.offset + component ] = value;
 
-				for ( let j = 0; j < this.itemSize; j ++ ) {
+        return this;
 
-					array.push( this.data.array[ index + j ] );
+    }
 
-				}
+    // Convenience accessors backed by the utility surface above.
+    packHeaderToVec4( out ) {
 
-			}
+        return InterleavedBufferAttributeUtils.packHeaderVec4(
+            out, this.itemSize, this.offset, this.normalized, this.data.version
+        );
 
-			return {
-				itemSize: this.itemSize,
-				type: this.array.constructor.name,
-				array: array,
-				normalized: this.normalized
-			};
+    }
 
-		} else {
+    asBitecsComponent( name ) {
 
-			if ( data.interleavedBuffers === undefined ) {
+        return InterleavedBufferAttributeUtils.registerComponent(
+            name, this.count, this.itemSize, this.offset
+        );
 
-				data.interleavedBuffers = {};
+    }
 
-			}
+    getByteOffset( index, bytesPerElement = 4 ) {
 
-			if ( data.interleavedBuffers[ this.data.uuid ] === undefined ) {
+        return InterleavedBufferAttributeUtils.byteOffset(
+            index, this.offset, this.data.stride, bytesPerElement
+        );
 
-				data.interleavedBuffers[ this.data.uuid ] = this.data.toJSON( data );
+    }
 
-			}
+    getTotalBytes() {
 
-			return {
-				isInterleavedBufferAttribute: true,
-				itemSize: this.itemSize,
-				data: this.data.uuid,
-				offset: this.offset,
-				normalized: this.normalized
-			};
+        return InterleavedBufferAttributeUtils.totalBytes(
+            this.array, this.itemSize, this.count
+        );
 
-		}
+    }
 
-	}
+    fillWithNoise( scale = 0.1, seed = 0 ) {
 
-	// ── Convenience accessors backed by the utility surface above ─────────────
+        InterleavedBufferAttributeUtils.fillWithNoise(
+            this.array, this.count, this.itemSize, scale, seed
+        );
+        this.data.needsUpdate = true;
 
-	packToVec4( out ) {
+        return this;
 
-		return InterleavedBufferAttributeUtils.packHeaderVec4(
-			out,
-			this.itemSize,
-			this.offset,
-			this.normalized,
-			this.data.version
-		);
-
-	}
-
-	asBitecsComponent( name ) {
-
-		return InterleavedBufferAttributeUtils.registerComponent( name, this.count, this.itemSize );
-
-	}
-
-	getByteOffset( index, bytesPerElement = 4 ) {
-
-		return InterleavedBufferAttributeUtils.byteOffset(
-			index,
-			this.offset,
-			this.itemSize,
-			bytesPerElement
-		);
-
-	}
-
-	getTotalBytes( bytesPerElement = 4 ) {
-
-		return InterleavedBufferAttributeUtils.totalBytes(
-			this.count,
-			this.itemSize,
-			bytesPerElement
-		);
-
-	}
-
-	fillWithNoise( scale, seed ) {
-
-		InterleavedBufferAttributeUtils.fillWithNoise(
-			this.data.array,
-			this.count,
-			this.itemSize,
-			scale,
-			seed
-		);
-		this.data.needsUpdate = true;
-		return this;
-
-	}
+    }
 
 }
 
 InterleavedBufferAttribute.Utils = InterleavedBufferAttributeUtils;
 
 export default InterleavedBufferAttribute;
-export { InterleavedBufferAttributeUtils };
