@@ -1,22 +1,16 @@
 // file number : 007
 // full path name : src/core/007_RenderTarget.js
-// description : Offscreen render target buffer that the GPU draws into before post-processing / display. Rewritten as an ES module; extends the local 001_EventDispatcher and uses 016_Vector4 for scissor/viewport. Bridges to bitecs for SoA render-target registration, gl-matrix for packing the RT header (width, height, depth, count) into a vec4, double.js for high-precision dimension tracking, and simplex-noise for procedural RT-name generation. All non-chat three.js r185 imports (Texture, LinearFilter, Source) are imported explicitly so the module remains self-contained.
-// best for  : Post-processing chains, shadow map targets, reflection/refraction passes, and MRT pipelines. Directly consumed by WebGLRenderTarget and WebGPURenderTarget.
+// description : A render target is a buffer where the video card draws pixels for a scene that is being rendered in the background. It is used in different effects, such as applying postprocessing to a rendered image before displaying it on the screen. Rewritten as an ES module; imports Vector4 from the threejsbitecs/math folder, Texture and Source from three.js r185 (non-math), and bridges to bitecs for SoA registration, gl-matrix for viewport/scissor packing, double.js for high-precision size tracking, and simplex-noise for procedural render-target utilities. Corrected import paths and streamlined exports to a single default export.
+// best for : Off-screen rendering, post-processing pipelines, shadow maps, and any effect that requires rendering to a texture instead of the default framebuffer.
 // license : MIT
 
-// ── DeepSeek chat link dependencies (rewritten core) ─────────────────────────
 import EventDispatcher from './001_EventDispatcher.js';
-import Vector4 from '../math/016_Vector4.js';
+import Vector4 from '../math/002_Vector4.js';
 
-// ── three.js r185 src/ dependencies NOT in the DeepSeek chat link ────────────
-// These are the exact imports from the original r185 RenderTarget.js source.
-// They are kept as external leaves so the render-target behaviour is preserved
-// without rewriting the entire texture / constants subsystem.
-import { Texture } from '../textures/Texture.js';
-import { LinearFilter } from '../constants.js';
-import { Source } from '../textures/Source.js';
+import { Texture } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/textures/Texture.js';
+import { Source } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/textures/Source.js';
+import { LinearFilter } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/constants.js';
 
-// ── External libraries (must be imported and used) ───────────────────────────
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -29,241 +23,272 @@ const _noise4D = createNoise4D();
 const _scratchVec4 = new Float64Array( 4 );
 const _scratchMat4 = new Float64Array( 16 );
 
-// Default constant mirror of three.js constants.js (LinearFilter = 1006)
-const _DEFAULTS = {
-	generateMipmaps: false,
-	internalFormat: null,
-	minFilter: LinearFilter,
-	depthBuffer: true,
-	stencilBuffer: false,
-	resolveDepthBuffer: true,
-	resolveStencilBuffer: true,
-	depthTexture: null,
-	samples: 0,
-	count: 1,
-	depth: 1,
-	multiview: false,
-	useArrayDepthTexture: false,
-};
-
 const RenderTargetUtils = {
 
-	// gl-matrix bridge: pack RT header (width, height, depth, count) into a vec4.
-	packHeaderVec4: ( out, width, height, depth, count ) => {
+    // gl-matrix bridge: pack viewport (x, y, width, height) into a vec4.
+    packViewportToVec4: ( out, viewport ) => {
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set( out || _scratchVec4, width, height, depth, count );
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+        glMatrix.mat4.identity( _scratchMat4 );
+        glMatrix.vec4.set( out || _scratchVec4, viewport.x, viewport.y, viewport.z, viewport.w );
+        glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
+        return out || _scratchVec4;
 
-	},
+    },
 
-	// bitecs bridge: register a RenderTarget as a SoA component column set.
-	registerComponent: ( name, count ) => {
+    // double.js bridge: high-precision total pixel count of the render target.
+    totalPixels: ( width, height, depth, count ) => {
 
-		const widthColumn = new Float64Array( count );
-		const heightColumn = new Float64Array( count );
-		const depthColumn = new Float64Array( count );
-		const samplesColumn = new Uint8Array( count );
-		return { name, widthColumn, heightColumn, depthColumn, samplesColumn, count };
+        let total = new Double( width );
+        total.mul( height ).mul( depth ).mul( count );
+        return total.valueOf();
 
-	},
+    },
 
-	// double.js bridge: high-precision area computation for viewport/scissor.
-	totalPixels: ( width, height, depth ) => {
+    // bitecs bridge: register a RenderTarget as a SoA component column.
+    registerComponent: ( name, count ) => {
 
-		const w = new Double( width );
-		const h = new Double( height );
-		const d = new Double( depth );
-		return w.mul( h ).mul( d ).valueOf();
+        const widthColumn = new Float64Array( count );
+        const heightColumn = new Float64Array( count );
+        const depthColumn = new Float64Array( count );
+        const samplesColumn = new Uint8Array( count );
+        return { name, widthColumn, heightColumn, depthColumn, samplesColumn, count };
 
-	},
+    },
 
-	// simplex-noise bridge: procedural RT name helper.
-	randomName: ( seed = 0 ) => {
+    // simplex-noise bridge: procedural noise for render-target utilities.
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
 
-		const n = _noise2D( seed, 0 );
-		return `RT_${ Math.abs( Math.floor( n * 1e6 ) ) }`;
-
-	},
-
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
-
-	bitecs,
-	glMatrix,
-	Double,
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
 class RenderTarget extends EventDispatcher {
 
-	constructor( width = 1, height = 1, options = {} ) {
+    constructor( width = 1, height = 1, options = {} ) {
 
-		super();
+        super();
 
-		options = Object.assign( {}, _DEFAULTS, options );
+        options = Object.assign( {
+            generateMipmaps: false,
+            internalFormat: null,
+            minFilter: LinearFilter,
+            depthBuffer: true,
+            stencilBuffer: false,
+            resolveDepthBuffer: true,
+            resolveStencilBuffer: true,
+            depthTexture: null,
+            samples: 0,
+            count: 1,
+            depth: 1,
+            multiview: false,
+            useArrayDepthTexture: false,
+        }, options );
 
-		this.isRenderTarget = true;
+        this.isRenderTarget = true;
 
-		this.width = width;
-		this.height = height;
-		this.depth = options.depth;
+        this.width = width;
+        this.height = height;
+        this.depth = options.depth;
 
-		this.scissor = new Vector4( 0, 0, width, height );
-		this.scissorTest = false;
+        this.scissor = new Vector4( 0, 0, width, height );
+        this.scissorTest = false;
+        this.viewport = new Vector4( 0, 0, width, height );
 
-		this.viewport = new Vector4( 0, 0, width, height );
+        this.textures = [];
 
-		const image = { width, height, depth: options.depth };
+        const image = { width: width, height: height, depth: options.depth };
+        const texture = new Texture( image );
 
-		if ( options.multiview ) {
+        const count = options.count;
 
-			const source = new Source( new DataView( new ArrayBuffer( width * height * options.depth * 4 ) ) );
-			source.needsUpdate = true;
+        for ( let i = 0; i < count; i ++ ) {
 
-			this.texture = new Texture();
-			this.texture.source = source;
-			this.texture.image = image;
+            this.textures[ i ] = texture.clone();
+            this.textures[ i ].isRenderTargetTexture = true;
+            this.textures[ i ].renderTarget = this;
 
-		} else {
+        }
 
-			this.texture = new Texture(
-				image,
-				options.mapping,
-				options.wrapS,
-				options.wrapT,
-				options.magFilter,
-				options.minFilter,
-				options.format,
-				options.type,
-				options.anisotropy,
-				options.colorSpace
-			);
+        this._setTextureOptions( options );
 
-		}
+        this.depthBuffer = options.depthBuffer;
+        this.stencilBuffer = options.stencilBuffer;
+        this.resolveDepthBuffer = options.resolveDepthBuffer;
+        this.resolveStencilBuffer = options.resolveStencilBuffer;
 
-		this.texture.isRenderTargetTexture = true;
-		this.texture.generateMipmaps = options.generateMipmaps;
-		this.texture.internalFormat = options.internalFormat;
+        this._depthTexture = null;
+        this.depthTexture = options.depthTexture;
 
-		this.depthBuffer = options.depthBuffer;
-		this.stencilBuffer = options.stencilBuffer;
+        this.samples = options.samples;
+        this.multiview = options.multiview;
+        this.useArrayDepthTexture = options.useArrayDepthTexture;
 
-		this.resolveDepthBuffer = options.resolveDepthBuffer;
-		this.resolveStencilBuffer = options.resolveStencilBuffer;
+    }
 
-		this.depthTexture = options.depthTexture;
+    _setTextureOptions( options = {} ) {
 
-		this.samples = options.samples;
-		this.count = options.count;
-		this.multiview = options.multiview;
-		this.useArrayDepthTexture = options.useArrayDepthTexture;
+        const values = {
+            minFilter: LinearFilter,
+            generateMipmaps: false,
+            flipY: false,
+            internalFormat: null,
+        };
 
-		this._version = 0;
+        if ( options.mapping !== undefined ) values.mapping = options.mapping;
+        if ( options.wrapS !== undefined ) values.wrapS = options.wrapS;
+        if ( options.wrapT !== undefined ) values.wrapT = options.wrapT;
+        if ( options.wrapR !== undefined ) values.wrapR = options.wrapR;
+        if ( options.magFilter !== undefined ) values.magFilter = options.magFilter;
+        if ( options.minFilter !== undefined ) values.minFilter = options.minFilter;
+        if ( options.format !== undefined ) values.format = options.format;
+        if ( options.type !== undefined ) values.type = options.type;
+        if ( options.anisotropy !== undefined ) values.anisotropy = options.anisotropy;
+        if ( options.colorSpace !== undefined ) values.colorSpace = options.colorSpace;
+        if ( options.flipY !== undefined ) values.flipY = options.flipY;
+        if ( options.generateMipmaps !== undefined ) values.generateMipmaps = options.generateMipmaps;
+        if ( options.internalFormat !== undefined ) values.internalFormat = options.internalFormat;
 
-	}
+        for ( let i = 0; i < this.textures.length; i ++ ) {
 
-	setSize( width, height, depth = 1 ) {
+            const texture = this.textures[ i ];
+            texture.setValues( values );
 
-		if ( this.width !== width || this.height !== height || this.depth !== depth ) {
+        }
 
-			this.width = width;
-			this.height = height;
-			this.depth = depth;
+    }
 
-			this.texture.image.width = width;
-			this.texture.image.height = height;
-			this.texture.image.depth = depth;
+    get texture() {
 
-			this.dispose();
+        return this.textures[ 0 ];
 
-		}
+    }
 
-		this.viewport.set( 0, 0, width, height );
-		this.scissor.set( 0, 0, width, height );
+    set texture( value ) {
 
-		return this;
+        this.textures[ 0 ] = value;
 
-	}
+    }
 
-	clone() {
+    set depthTexture( current ) {
 
-		return new this.constructor().copy( this );
+        if ( this._depthTexture !== null ) this._depthTexture.renderTarget = null;
+        if ( current !== null ) current.renderTarget = this;
 
-	}
+        this._depthTexture = current;
 
-	copy( source ) {
+    }
 
-		this.width = source.width;
-		this.height = source.height;
-		this.depth = source.depth;
+    get depthTexture() {
 
-		this.scissor.copy( source.scissor );
-		this.scissorTest = source.scissorTest;
+        return this._depthTexture;
 
-		this.viewport.copy( source.viewport );
+    }
 
-		this.texture = source.texture.clone();
-		this.texture.image = Object.assign( {}, source.texture.image );
+    setSize( width, height, depth = 1 ) {
 
-		this.depthBuffer = source.depthBuffer;
-		this.stencilBuffer = source.stencilBuffer;
-		this.resolveDepthBuffer = source.resolveDepthBuffer;
-		this.resolveStencilBuffer = source.resolveStencilBuffer;
+        if ( this.width !== width || this.height !== height || this.depth !== depth ) {
 
-		this.depthTexture = source.depthTexture;
+            this.width = width;
+            this.height = height;
+            this.depth = depth;
 
-		this.samples = source.samples;
-		this.count = source.count;
-		this.multiview = source.multiview;
-		this.useArrayDepthTexture = source.useArrayDepthTexture;
+            for ( let i = 0, il = this.textures.length; i < il; i ++ ) {
 
-		return this;
+                this.textures[ i ].image.width = width;
+                this.textures[ i ].image.height = height;
+                this.textures[ i ].image.depth = depth;
 
-	}
+                if ( this.textures[ i ].isData3DTexture !== true ) {
 
-	dispose() {
+                    this.textures[ i ].isArrayTexture = this.textures[ i ].image.depth > 1;
 
-		this.dispatchEvent( { type: 'dispose' } );
+                }
 
-	}
+            }
 
-	// Convenience accessors backed by the utility surface above.
-	packToVec4( out ) {
+            this.dispose();
 
-		return RenderTargetUtils.packHeaderVec4( out, this.width, this.height, this.depth, this.count );
+        }
 
-	}
+        this.viewport.set( 0, 0, width, height );
+        this.scissor.set( 0, 0, width, height );
 
-	asBitecsComponent( name, count ) {
+    }
 
-		return RenderTargetUtils.registerComponent( name, count );
+    clone() {
 
-	}
+        return new this.constructor().copy( this );
 
-	get totalPixels() {
+    }
 
-		return RenderTargetUtils.totalPixels( this.width, this.height, this.depth );
+    copy( source ) {
 
-	}
+        this.width = source.width;
+        this.height = source.height;
+        this.depth = source.depth;
 
-	get version() {
+        this.scissor.copy( source.scissor );
+        this.scissorTest = source.scissorTest;
 
-		return this._version;
+        this.viewport.copy( source.viewport );
 
-	}
+        this.textures.length = 0;
 
-	static randomName( seed ) {
+        for ( let i = 0, il = source.textures.length; i < il; i ++ ) {
 
-		return RenderTargetUtils.randomName( seed );
+            this.textures[ i ] = source.textures[ i ].clone();
+            this.textures[ i ].isRenderTargetTexture = true;
+            this.textures[ i ].renderTarget = this;
 
-	}
+            const image = Object.assign( {}, source.textures[ i ].image );
+            this.textures[ i ].source = new Source( image );
+
+        }
+
+        this.depthBuffer = source.depthBuffer;
+        this.stencilBuffer = source.stencilBuffer;
+        this.resolveDepthBuffer = source.resolveDepthBuffer;
+        this.resolveStencilBuffer = source.resolveStencilBuffer;
+
+        if ( source.depthTexture !== null ) this.depthTexture = source.depthTexture.clone();
+
+        this.samples = source.samples;
+
+        return this;
+
+    }
+
+    dispose() {
+
+        this.dispatchEvent( { type: 'dispose' } );
+
+    }
+
+    // Convenience accessors backed by the utility surface above.
+    packViewportToVec4( out ) {
+
+        return RenderTargetUtils.packViewportToVec4( out, this.viewport );
+
+    }
+
+    getTotalPixels() {
+
+        return RenderTargetUtils.totalPixels( this.width, this.height, this.depth, this.textures.length );
+
+    }
+
+    asBitecsComponent( name, count ) {
+
+        return RenderTargetUtils.registerComponent( name, count );
+
+    }
 
 }
 
 RenderTarget.Utils = RenderTargetUtils;
 
 export default RenderTarget;
-export { RenderTargetUtils };
