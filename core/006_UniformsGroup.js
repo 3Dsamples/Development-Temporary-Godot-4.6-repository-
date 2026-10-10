@@ -1,11 +1,16 @@
 // file number : 006
 // full path name : src/core/006_UniformsGroup.js
-// description : Container that groups multiple Uniform instances into a single UBO-friendly block. Rewritten as an ES module; inherits from the local EventDispatcher (001_EventDispatcher.js) and consumes Uniform (005_Uniform.js). Bridges to bitecs for SoA uniform-column registration, gl-matrix for packing the group into a vec4 header, double.js for high-precision group-version tracking, and simplex-noise for procedural group-name / seed generation.
-// best for  : Declaring UBO-style uniform blocks inside ShaderMaterial. Only supported by WebGLRenderer.
+// description : A class for managing multiple uniforms in a single group. The renderer will process such a definition as a single UBO. Since this class can only be used in context of ShaderMaterial, it is only supported in WebGLRenderer. Rewritten as an ES module; imports MathUtils from the threejsbitecs/math folder, bridges to gl-matrix for packing scalar/vector uniforms into a uniform-friendly vec4, double.js for high-precision numeric uniforms, bitecs for SoA uniform registration, and simplex-noise for procedural default values.
+// best for : Declaring shader uniforms in ShaderMaterial / RawShaderMaterial. Acts as the container consumed by WebGLUniforms upload paths.
 // license : MIT
+
+import MathUtils from '../math/001_MathUtils.js';
 
 import EventDispatcher from './001_EventDispatcher.js';
 import Uniform from './005_Uniform.js';
+
+import { StaticDrawUsage } from 'https://raw.githubusercontent.com/mrdoob/three.js/r185/src/constants.js';
+
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -22,188 +27,187 @@ let _id = 0;
 
 const UniformsGroupUtils = {
 
-	// gl-matrix bridge: pack group header (id, usage, count, version) into a vec4.
-	packHeaderVec4: ( out, id, usage, count, version ) => {
+    // 001_MathUtils bridge: clamp a scalar to a safe uniform range.
+    clampScalar: ( value, min = - Infinity, max = Infinity ) => {
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set( out || _scratchVec4, id, usage, count, version );
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+        return MathUtils.clamp( value, min, max );
 
-	},
+    },
 
-	// bitecs bridge: register a UniformsGroup as a SoA component column set.
-	registerComponent: ( name, uniforms ) => {
+    // gl-matrix bridge: pack an array of uniforms into a single vec4 (first four).
+    packGroupToVec4: ( out, uniforms ) => {
 
-		const count = uniforms.length;
-		const columns = {
-			name,
-			uniformNames: new Array( count ),
-			uniformValues: new Float64Array( count ),
-			count,
-		};
+        glMatrix.mat4.identity( _scratchMat4 );
 
-		for ( let i = 0; i < count; i ++ ) {
+        const a = uniforms[ 0 ] ? uniforms[ 0 ].value : 0;
+        const b = uniforms[ 1 ] ? uniforms[ 1 ].value : 0;
+        const c = uniforms[ 2 ] ? uniforms[ 2 ].value : 0;
+        const d = uniforms[ 3 ] ? uniforms[ 3 ].value : 1;
 
-			columns.uniformNames[ i ] = uniforms[ i ].name;
-			const v = uniforms[ i ].value;
-			columns.uniformValues[ i ] = typeof v === 'number' ? v : 0;
+        glMatrix.vec4.set( out || _scratchVec4, a, b, c, d );
+        glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
+        return out || _scratchVec4;
 
-		}
+    },
 
-		return columns;
+    // double.js bridge: high-precision total byte-size estimate for the group.
+    estimateBytes: ( uniforms ) => {
 
-	},
+        let total = new Double( 0 );
+        for ( let i = 0; i < uniforms.length; i ++ ) {
 
-	// double.js bridge: high-precision version bump for the group.
-	bumpVersion: ( version ) => {
+            total.add( 4 ); // assume float32 per component
 
-		const d = new Double( version );
-		d.add( 1 );
-		return d.valueOf();
+        }
+        return total.valueOf();
 
-	},
+    },
 
-	// simplex-noise bridge: procedural group name / seed helpers.
-	noise2D: ( x, y ) => _noise2D( x, y ),
-	noise3D: ( x, y, z ) => _noise3D( x, y, z ),
-	noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
+    // bitecs bridge: register the group as a SoA component column of uniform values.
+    registerComponent: ( name, count ) => {
 
-	randomGroupName: ( seed = 0 ) => {
+        const valueColumn = new Float64Array( count );
+        return { name, valueColumn, count };
 
-		const n = _noise2D( seed, 0 );
-		return `UniformsGroup_${ Math.abs( Math.floor( n * 1e6 ) ) }`;
+    },
 
-	},
+    // simplex-noise bridge: procedural noise for default uniform values.
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
 
-	bitecs,
-	glMatrix,
-	Double,
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
 class UniformsGroup extends EventDispatcher {
 
-	constructor() {
+    constructor() {
 
-		super();
+        super();
 
-		this.isUniformsGroup = true;
+        this.isUniformsGroup = true;
 
-		Object.defineProperty( this, 'id', { value: _id ++ } );
+        Object.defineProperty( this, 'id', { value: _id ++ } );
 
-		this.name = '';
+        this.name = '';
+        this.usage = StaticDrawUsage;
+        this.uniforms = [];
 
-		this.usage = 35048; // StaticDrawUsage
+    }
 
-		this.uniforms = [];
+    add( uniform ) {
 
-		this._version = 0;
+        this.uniforms.push( uniform );
+        return this;
 
-	}
+    }
 
-	add( uniform ) {
+    remove( uniform ) {
 
-		this.uniforms.push( uniform );
-		this._version = UniformsGroupUtils.bumpVersion( this._version );
-		return this;
+        const index = this.uniforms.indexOf( uniform );
+        if ( index !== - 1 ) this.uniforms.splice( index, 1 );
+        return this;
 
-	}
+    }
 
-	remove( uniform ) {
+    setName( name ) {
 
-		const index = this.uniforms.indexOf( uniform );
+        this.name = name;
+        return this;
 
-		if ( index !== - 1 ) {
+    }
 
-			this.uniforms.splice( index, 1 );
-			this._version = UniformsGroupUtils.bumpVersion( this._version );
+    setUsage( value ) {
 
-		}
+        this.usage = value;
+        return this;
 
-		return this;
+    }
 
-	}
+    dispose() {
 
-	setName( name ) {
+        this.dispatchEvent( { type: 'dispose' } );
 
-		this.name = name;
-		return this;
+    }
 
-	}
+    copy( source ) {
 
-	setUsage( value ) {
+        this.name = source.name;
+        this.usage = source.usage;
 
-		this.usage = value;
-		return this;
+        const uniformsSource = source.uniforms;
+        this.uniforms.length = 0;
 
-	}
+        for ( let i = 0, l = uniformsSource.length; i < l; i ++ ) {
 
-	dispose() {
+            const uniforms = Array.isArray( uniformsSource[ i ] )
+                ? uniformsSource[ i ]
+                : [ uniformsSource[ i ] ];
 
-		this.dispatchEvent( { type: 'dispose' } );
+            for ( let j = 0; j < uniforms.length; j ++ ) {
 
-	}
+                this.uniforms.push( uniforms[ j ].clone() );
 
-	copy( source ) {
+            }
 
-		this.name = source.name;
-		this.usage = source.usage;
+        }
 
-		const uniformsSource = source.uniforms;
-		this.uniforms.length = 0;
+        return this;
 
-		for ( let i = 0, l = uniformsSource.length; i < l; i ++ ) {
+    }
 
-			const uniforms = Array.isArray( uniformsSource[ i ] ) ? uniformsSource[ i ] : [ uniformsSource[ i ] ];
+    clone() {
 
-			for ( let j = 0; j < uniforms.length; j ++ ) {
+        return new this.constructor().copy( this );
 
-				this.uniforms.push( uniforms[ j ].clone() );
+    }
 
-			}
+    // Convenience accessors backed by the utility surface above.
+    clampAll( min, max ) {
 
-		}
+        for ( let i = 0; i < this.uniforms.length; i ++ ) {
 
-		this._version = UniformsGroupUtils.bumpVersion( this._version );
-		return this;
+            const u = this.uniforms[ i ];
+            if ( typeof u.value === 'number' ) {
 
-	}
+                u.value = UniformsGroupUtils.clampScalar( u.value, min, max );
 
-	clone() {
+            }
 
-		return new this.constructor().copy( this );
+        }
+        return this;
 
-	}
+    }
 
-	// Convenience accessors backed by the utility surface above.
-	packToVec4( out ) {
+    packToVec4( out ) {
 
-		return UniformsGroupUtils.packHeaderVec4( out, this.id, this.usage, this.uniforms.length, this._version );
+        return UniformsGroupUtils.packGroupToVec4( out, this.uniforms );
 
-	}
+    }
 
-	asBitecsComponent( name ) {
+    estimateBytes() {
 
-		return UniformsGroupUtils.registerComponent( name, this.uniforms );
+        return UniformsGroupUtils.estimateBytes( this.uniforms );
 
-	}
+    }
 
-	get version() {
+    asBitecsComponent( name, count ) {
 
-		return this._version;
+        return UniformsGroupUtils.registerComponent( name, count );
 
-	}
+    }
 
-	static randomName( seed ) {
+    cloneUniforms() {
 
-		return UniformsGroupUtils.randomGroupName( seed );
+        return this.uniforms.map( ( u ) => ( Array.isArray( u ) ? u.map( ( uu ) => uu.clone() ) : u.clone() ) );
 
-	}
+    }
 
 }
 
 UniformsGroup.Utils = UniformsGroupUtils;
 
 export default UniformsGroup;
-export { UniformsGroupUtils };
