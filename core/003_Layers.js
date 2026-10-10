@@ -1,10 +1,9 @@
 // file number : 003
 // full path name : src/core/003_Layers.js
-// description : 32-bit layer membership bitmask used by Object3D, Raycaster, Camera, and renderers to include/exclude objects from tests and rendering. Rewritten as an ES module; bridges to 001_MathUtils for mask validation, gl-matrix for vec4 mask packing, double.js for safe version tracking, bitecs for SoA component registration, and simplex-noise for procedural random mask generation.
-// best for  : Per-object layer filtering in Object3D, Raycaster, Camera, WebGLRenderer, and WebGPURenderer.
+// description : 32-bit layer mask used to control visibility/culling relationships between Object3D instances and cameras. Rewritten as an ES module; bridges to bitecs SoA arrays, gl-matrix for mask arithmetic helpers, double.js for safe high-precision bit math, and simplex-noise through a static utility surface.
+// best for : Per-object layer membership checks. Object3D owns a Layers instance; the renderer tests camera.layers against object.layers.
 // license : MIT
 
-import MathUtils from './001_MathUtils.js';
 import * as bitecs from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
 import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
@@ -14,214 +13,137 @@ const _noise2D = createNoise2D();
 const _noise3D = createNoise3D();
 const _noise4D = createNoise4D();
 
-const _scratchVec4 = new Float64Array( 4 );
-const _scratchMat4 = new Float64Array( 16 );
+const _scratchVec2 = new Float64Array( 2 );
+const _scratchMat2 = new Float64Array( 4 );
 
 const LayersUtils = {
 
-	// 001_MathUtils bridge: validate a 32-bit layer index.
-	validateIndex: ( channel ) => {
+    // gl-matrix bridge: mask-as-column vector helper (useful for batch layer
+    // membership tests using vec2 + mat2 identity).
+    maskAsVec2: ( mask ) => {
 
-		return MathUtils.clamp( Math.floor( channel ), 0, 31 );
+        glMatrix.mat2.identity( _scratchMat2 );
+        glMatrix.vec2.set( _scratchVec2, mask >>> 0, ( mask >>> 0 ) ^ 0xffffffff );
+        glMatrix.vec2.transformMat2( _scratchVec2, _scratchVec2, _scratchMat2 );
+        return _scratchVec2;
 
-	},
+    },
 
-	// gl-matrix bridge: pack a mask into a vec4 (x = low 8 bits, y = next 8, z = next 8, w = high 8).
-	packMaskVec4: ( out, mask ) => {
+    // bitecs bridge: expose layer membership as a Uint32Array column suitable
+    // for use as a bitecs component column.
+    registerComponent: ( name, count ) => {
 
-		glMatrix.mat4.identity( _scratchMat4 );
-		glMatrix.vec4.set(
-			out || _scratchVec4,
-			mask & 0xff,
-			( mask >>> 8 ) & 0xff,
-			( mask >>> 16 ) & 0xff,
-			( mask >>> 24 ) & 0xff
-		);
-		glMatrix.vec4.transformMat4( out || _scratchVec4, out || _scratchVec4, _scratchMat4 );
-		return out || _scratchVec4;
+        const column = new Uint32Array( count );
+        column.fill( 1 ); // default: layer 0
+        return { name, column, count };
 
-	},
+    },
 
-	// bitecs bridge: register a Layers mask as a SoA component column.
-	registerComponent: ( name, count ) => {
+    // double.js bridge: high-precision popcount of set layers.
+    popCount: ( mask ) => {
 
-		const maskColumn = new Uint32Array( count );
-		return { name, maskColumn, count };
+        const d = new Double( mask >>> 0 );
+        return d.valueOf().toString( 2 ).split( '1' ).length - 1;
 
-	},
+    },
 
-	// double.js bridge: safe version increment for mask-change tracking.
-	incrementVersion: ( version ) => {
+    // simplex-noise bridge (deterministic layer jitter generators).
+    noise2D: ( x, y ) => _noise2D( x, y ),
+    noise3D: ( x, y, z ) => _noise3D( x, y, z ),
+    noise4D: ( x, y, z, w ) => _noise4D( x, y, z, w ),
 
-		const d = new Double( version );
-		d.add( 1 );
-		return d.valueOf();
-
-	},
-
-	// simplex-noise bridge: generate a random 32-bit mask with given density (0..1).
-	randomMask: ( density = 0.5, seed = 0 ) => {
-
-		let mask = 0;
-		for ( let i = 0; i < 32; i ++ ) {
-
-			const n = _noise2D( i * 0.1 + seed, 0 );
-			if ( ( n + 1 ) * 0.5 < density ) mask |= ( 1 << i );
-
-		}
-		return mask >>> 0;
-
-	},
-
-	bitecs,
-	glMatrix,
-	Double,
+    bitecs,
+    glMatrix,
+    Double,
 
 };
 
 class Layers {
 
-	constructor() {
+    constructor() {
 
-		this.mask = 1 | 0;
+        this.mask = 1 | 0;
 
-	}
+    }
 
-	set( channel ) {
+    set( layer ) {
 
-		this.mask = ( 1 << LayersUtils.validateIndex( channel ) ) | 0;
+        this.mask = ( 1 << layer | 0 ) >>> 0;
 
-	}
+    }
 
-	enable( channel ) {
+    enable( layer ) {
 
-		this.mask |= ( 1 << LayersUtils.validateIndex( channel ) ) | 0;
+        this.mask |= 1 << layer | 0;
 
-	}
+    }
 
-	enableAll() {
+    enableAll() {
 
-		this.mask = 0xffffffff | 0;
+        this.mask = 0xffffffff | 0;
 
-	}
+    }
 
-	toggle( channel ) {
+    toggle( layer ) {
 
-		this.mask ^= ( 1 << LayersUtils.validateIndex( channel ) ) | 0;
+        this.mask ^= 1 << layer | 0;
 
-	}
+    }
 
-	disable( channel ) {
+    disable( layer ) {
 
-		this.mask &= ~ ( 1 << LayersUtils.validateIndex( channel ) );
+        this.mask &= ~ ( 1 << layer | 0 );
 
-	}
+    }
 
-	disableAll() {
+    disableAll() {
 
-		this.mask = 0;
+        this.mask = 0;
 
-	}
+    }
 
-	test( layers ) {
+    test( layers ) {
 
-		return ( this.mask & layers.mask ) !== 0;
+        return ( this.mask & layers.mask ) !== 0;
 
-	}
+    }
 
-	isEnabled( channel ) {
+    isEnabled( layer ) {
 
-		return ( this.mask & ( 1 << LayersUtils.validateIndex( channel ) ) ) !== 0;
+        return ( this.mask & ( 1 << layer | 0 ) ) !== 0;
 
-	}
+    }
 
-	setMask( mask ) {
+    // Convenience accessors backed by the utility surface above.
+    getPopCount() {
 
-		this.mask = mask | 0;
+        return LayersUtils.popCount( this.mask );
 
-	}
+    }
 
-	getMask() {
+    asBitecsComponent( name, count ) {
 
-		return this.mask;
+        const comp = LayersUtils.registerComponent( name, count );
+        comp.column.fill( this.mask >>> 0 );
+        return comp;
 
-	}
+    }
 
-	clear() {
+    toVec2() {
 
-		this.mask = 0;
+        return LayersUtils.maskAsVec2( this.mask );
 
-	}
+    }
 
-	equals( layers ) {
+    copy( source ) {
 
-		return layers.mask === this.mask;
+        this.mask = source.mask | 0;
+        return this;
 
-	}
-
-	copy( layers ) {
-
-		this.mask = layers.mask | 0;
-		return this;
-
-	}
-
-	clone() {
-
-		const layers = new Layers();
-		layers.mask = this.mask | 0;
-		return layers;
-
-	}
-
-	toArray() {
-
-		return [ this.mask ];
-
-	}
-
-	fromArray( array ) {
-
-		this.mask = array[ 0 ] | 0;
-		return this;
-
-	}
-
-	serialize() {
-
-		return { mask: this.mask };
-
-	}
-
-	deserialize( data ) {
-
-		this.mask = data.mask | 0;
-		return this;
-
-	}
-
-	// Convenience accessors backed by the utility surface above.
-	packToVec4( out ) {
-
-		return LayersUtils.packMaskVec4( out, this.mask );
-
-	}
-
-	asBitecsComponent( name, count ) {
-
-		return LayersUtils.registerComponent( name, count );
-
-	}
-
-	static randomMask( density, seed ) {
-
-		return LayersUtils.randomMask( density, seed );
-
-	}
+    }
 
 }
 
 Layers.Utils = LayersUtils;
 
 export default Layers;
-export { LayersUtils };
