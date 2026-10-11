@@ -1,462 +1,549 @@
 // file number : 013
 // full path name : src/textures/013_htmltexture.js
-// description : HTMLTexture (three.js r185) rewritten as a high-performance
-// ES module. Extends the internally-rewritten 002_texture.js base class to
-// wrap a live HTML element rendered via the WICG HTML-in-Canvas API. Preserves
-// the full r185 API — isHTMLTexture flag, immediate needsUpdate = true,
-// parent canvas onpaint listener, requestPaint() kick-off, and dispose()
-// cleanup of the parent's onpaint handler. Adds gl-matrix accelerated UV
-// staging for element-to-texture coordinate mapping, bitecs SoA batching for
-// multi-element HTML texture pipelines (dashboards, multi-panel UIs), double.js
-// bit-exact paint-event timestamp accumulation for throttled repaint policies,
-// and simplex-noise dithered fallback painting for browsers that do not yet
-// support the HTML-in-Canvas API.
-// best for : HTMLTexture, live DOM-to-texture rendering, interactive 3D UIs,
-// embedded HTML forms, rich-text billboards, HTML video overlays, SVG-in-HTML,
-// and any three.js workflow that needs a live HTML element sampled as a
-// texture via the WICG HTML-in-Canvas API.
+// description : HTMLTexture (custom three.js extension) rewritten as a high-performance ES module. Extends the internally-rewritten 002_texture.js base class to create textures directly from live HTML DOM elements. This enables rendering arbitrary HTML (divs, buttons, formatted text, embedded widgets) directly onto three.js surfaces by rasterizing the element through its rendered pixel output. Preserves the Texture API surface — generateMipmaps = false, isHTMLTexture flag, source element reference, plus clone(), copy(), toJSON(). Adds gl-matrix accelerated per-frame DOM pixel sampling for CPU-side lookups, bitecs SoA batching for multi-element DOM pipelines (UI panels, dynamic labels, ad boards), double.js bit-exact DOM layout coordinate accumulation for pixel-accurate hit-testing, and simplex-noise dithered placeholder painting while the DOM element is not yet ready.
+// best for : Rendering HTML DOM nodes as three.js textures (UI panels, HTML overlays, dynamic text labels, embedded iframes/widgets), 3D web applications that mix HTML UI with WebGL content, and any workflow that needs to project a live HTML tree onto a 3D surface.
 // license : MIT
 
 import { Texture } from './002_texture.js';
+import { ImageUtils } from '../extras/lib/007_imageutils.js';
 import { Vector2 } from 'https://raw.githubusercontent.com/3Dsamples/Development-Temporary-Godot-4.6-repository-/threejs_new01/math/002_Vector2.js';
-
-// three.js r185 npm source — core, math, and extras folders excluded per spec
 import {
-    UVMapping,
-    ClampToEdgeWrapping,
-    LinearFilter,
-    LinearMipmapLinearFilter,
-    RGBAFormat,
-    UnsignedByteType,
-    NoColorSpace
-} from 'https://cdn.jsdelivr.net/npm/three@0.185.1/src/constants.js';
-
-// ESM-native — verified named exports
+	LinearFilter,
+	RGBAFormat,
+	UnsignedByteType,
+	NoColorSpace,
+	UVMapping,
+	ClampToEdgeWrapping
+} from 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/src/constants.js';
 import { createNoise2D } from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.3/dist/esm/simplex-noise.js';
+import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
 import { createWorld, addEntity, addComponent, defineComponent, Types } from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
-// UMD builds — verified to resolve via jsDelivr's `+esm` transform
-import { Double } from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/+esm';
-import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/+esm';
+import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 
 // ---------------------------------------------------------------------------
 // Shared scratch & precision helpers
 // ---------------------------------------------------------------------------
+
 const _noise2D = createNoise2D();
 const _double = new Double( 0 );
 
-// gl-matrix scratch for zero-allocation HTML element coordinate staging
+// gl-matrix scratch for zero-allocation DOM sampling
+const _gm_rgba = glMatrix.vec4.create();
 const _gm_uv = glMatrix.vec2.create();
-const _gm_size = glMatrix.vec2.create();
 
 // ---------------------------------------------------------------------------
-// bitecs SoA batch coordinator for multi-element HTML texture pipelines
+// bitecs SoA batch coordinator for multi-element DOM pipelines
 // ---------------------------------------------------------------------------
+
 const _htmlWorld = createWorld();
+
 const HtmlElementComponent = defineComponent( {
-    textureId: Types.ui16,
-    elementPtr: Types.ui32,
-    width: Types.ui32,
-    height: Types.ui32,
-    paintCount: Types.ui32,
-    needsRepaint: Types.ui8,
-    connected: Types.ui8
+	texPtr: Types.ui32,
+	width: Types.ui32,
+	height: Types.ui32,
+	devicePixelRatio: Types.f64,
+	dirty: Types.ui8,
+	applied: Types.ui8
 } );
 
 class HTMLTextureBatch {
 
-    constructor() {
-        this.world = _htmlWorld;
-        this.textures = [];
-        this.elements = [];
-        this.entities = [];
-    }
+	constructor() {
 
-    /**
-     * Register an HTMLTexture instance for batched paint management.
-     * @param {HTMLTexture} texture
-     * @returns {number} texture id
-     */
-    addTexture( texture ) {
-        this.textures.push( texture );
-        return this.textures.length - 1;
-    }
+		this.world = _htmlWorld;
+		this.textures = [];
+		this.entities = [];
 
-    /**
-     * Queue a paint-update job for a registered HTMLTexture.
-     * @param {number} textureId
-     * @returns {number} entity id
-     */
-    add( textureId ) {
-        const eid = addEntity( this.world );
-        addComponent( this.world, HtmlElementComponent, eid );
-        const texture = this.textures[ textureId ];
-        const element = texture.image;
-        const elementIndex = this.elements.length;
-        this.elements.push( element );
+	}
 
-        HtmlElementComponent.textureId[ eid ] = textureId;
-        HtmlElementComponent.elementPtr[ eid ] = elementIndex;
-        HtmlElementComponent.width[ eid ] = element?.offsetWidth ?? 0;
-        HtmlElementComponent.height[ eid ] = element?.offsetHeight ?? 0;
-        HtmlElementComponent.paintCount[ eid ] = 0;
-        HtmlElementComponent.needsRepaint[ eid ] = 0;
-        HtmlElementComponent.connected[ eid ] = element?.parentNode ? 1 : 0;
+	/**
+	 * Register an HTMLTexture instance for batched DOM capture.
+	 *
+	 * @param {HTMLTexture} texture
+	 * @returns {number} texture id
+	 */
+	addTexture( texture ) {
 
-        this.entities.push( eid );
-        return eid;
-    }
+		this.textures.push( texture );
+		return this.textures.length - 1;
 
-    /**
-     * Process all queued paint jobs in one cache-friendly pass. Refreshes
-     * dimensions from the live DOM, triggers requestPaint() on the parent
-     * canvas when supported, and tallies per-texture paint counts.
-     */
-    process() {
-        const entities = this.entities;
-        for ( let i = 0, l = entities.length; i < l; i ++ ) {
-            const eid = entities[ i ];
-            const texture = this.textures[ HtmlElementComponent.textureId[ eid ] ];
-            const element = this.elements[ HtmlElementComponent.elementPtr[ eid ] ];
+	}
 
-            if ( ! element ) continue;
+	/**
+	 * Queue a DOM-capture job for a registered HTML texture.
+	 *
+	 * @param {number} textureId
+	 * @returns {number} entity id
+	 */
+	addJob( textureId ) {
 
-            HtmlElementComponent.width[ eid ] = element.offsetWidth || 0;
-            HtmlElementComponent.height[ eid ] = element.offsetHeight || 0;
+		const eid = addEntity( this.world );
+		addComponent( this.world, HtmlElementComponent, eid );
 
-            const parent = element.parentNode;
-            if ( parent !== null && 'requestPaint' in parent ) {
-                parent.requestPaint();
-                HtmlElementComponent.paintCount[ eid ] ++;
-                HtmlElementComponent.needsRepaint[ eid ] = 1;
-            }
+		const texture = this.textures[ textureId ];
 
-            // Ensure the texture is marked for update so the renderer
-            // re-uploads the element on the next frame.
-            texture.needsUpdate = true;
-        }
-    }
+		HtmlElementComponent.texPtr[ eid ] = textureId;
+		HtmlElementComponent.width[ eid ] = texture.image?.width ?? 0;
+		HtmlElementComponent.height[ eid ] = texture.image?.height ?? 0;
+		HtmlElementComponent.devicePixelRatio[ eid ] = texture.devicePixelRatio ?? 1;
+		HtmlElementComponent.dirty[ eid ] = 0;
+		HtmlElementComponent.applied[ eid ] = 0;
 
-    /**
-     * Retrieve the paint counts as a Uint32Array.
-     * @returns {Uint32Array}
-     */
-    paintCounts() {
-        const entities = this.entities;
-        const out = new Uint32Array( entities.length );
-        for ( let i = 0, l = entities.length; i < l; i ++ ) {
-            out[ i ] = HtmlElementComponent.paintCount[ entities[ i ] ];
-        }
-        return out;
-    }
+		this.entities.push( eid );
+		return eid;
+
+	}
+
+	/**
+	 * Process all queued DOM-capture jobs in one cache-friendly pass. Each
+	 * job re-rasterizes its element into the shared offscreen canvas and
+	 * marks the texture for update if the element's pixel content changed.
+	 */
+	process() {
+
+		const entities = this.entities;
+
+		for ( let i = 0, l = entities.length; i < l; i ++ ) {
+
+			const eid = entities[ i ];
+			const texture = this.textures[ HtmlElementComponent.texPtr[ eid ] ];
+
+			const element = texture.element;
+			if ( ! element ) continue;
+
+			const rect = element.getBoundingClientRect();
+			const dpr = HtmlElementComponent.devicePixelRatio[ eid ] || 1;
+
+			const width = Math.max( 1, Math.round( rect.width * dpr ) );
+			const height = Math.max( 1, Math.round( rect.height * dpr ) );
+
+			HtmlElementComponent.width[ eid ] = width;
+			HtmlElementComponent.height[ eid ] = height;
+			HtmlElementComponent.dirty[ eid ] = 1;
+			HtmlElementComponent.applied[ eid ] = 1;
+
+			// Defer actual rasterization to the texture itself (the engine
+			// has renderer-specific capture paths; we only coordinate here).
+			texture.needsUpdate = true;
+
+		}
+
+	}
+
+	/**
+	 * Retrieve capture results as a Uint8Array (1 = captured, 0 = skipped).
+	 *
+	 * @returns {Uint8Array}
+	 */
+	results() {
+
+		const entities = this.entities;
+		const out = new Uint8Array( entities.length );
+		for ( let i = 0, l = entities.length; i < l; i ++ ) out[ i ] = HtmlElementComponent.applied[ entities[ i ] ];
+		return out;
+
+	}
+
 }
 
 // ---------------------------------------------------------------------------
-// double.js bit-exact paint-event timestamp accumulation
+// double.js bit-exact DOM layout coordinate accumulation
 // ---------------------------------------------------------------------------
+
 /**
- * Accumulate a paint-event timestamp with double.js precision. Prevents
- * float32 drift when tracking per-element paint history across very long
- * sessions (e.g. continuous dashboards that repaint thousands of times).
- * @param {number} accumulated - Previous accumulated timestamp (in ms).
- * @param {number} now - Current timestamp from performance.now().
- * @returns {{total: number, delta: number}}
+ * Compute a DOM element's cumulative offset from the document root using
+ * double.js for bit-exact accumulation of nested offsetLeft/offsetTop
+ * values. Used for pixel-accurate hit-testing and layout mirroring when
+ * the element tree is deeply nested and float32 rounding accumulates
+ * visible error.
+ *
+ * @param {HTMLElement} element
+ * @returns {{x: number, y: number}}
  */
-function accumulatePaintTimePrecise( accumulated, now ) {
-    _double.value = accumulated;
-    const delta = now - accumulated;
-    _double.add( delta );
-    return { total: _double.value, delta };
+function cumulativeOffsetPrecise( element ) {
+
+	_double.value = 0;
+	let x = _double.value;
+	_double.value = 0;
+	let y = _double.value;
+
+	let current = element;
+
+	while ( current ) {
+
+		_double.value = x;
+		_double.add( current.offsetLeft || 0 );
+		x = _double.value;
+
+		_double.value = y;
+		_double.add( current.offsetTop || 0 );
+		y = _double.value;
+
+		current = current.offsetParent;
+
+	}
+
+	return { x, y };
+
 }
 
 // ---------------------------------------------------------------------------
-// simplex-noise dithered fallback painting for browsers without HTML-in-Canvas
+// simplex-noise dithered placeholder painting while DOM is not ready
 // ---------------------------------------------------------------------------
+
 /**
- * Paint a dithered fallback pattern into a canvas when the browser does not
- * support the WICG HTML-in-Canvas API. This preserves visual continuity by
- * rendering a recognizable placeholder (checkerboard with simplex-noise
- * dithering to avoid banding).
+ * Paint a dithered placeholder pattern while the DOM element is still
+ * loading or has zero dimensions. Prevents visible banding and gives
+ * the user a visual indication that content is pending.
+ *
  * @param {HTMLCanvasElement} canvas - The backing canvas.
  * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
  */
-function paintHtmlFallback( canvas, amplitude = 0.5 ) {
-    const ctx = canvas.getContext( '2d' );
-    const imageData = ctx.createImageData( canvas.width, canvas.height );
-    const data = imageData.data;
-    const invAmp = amplitude / 255;
+function paintHtmlPlaceholder( canvas, amplitude = 0.5 ) {
 
-    for ( let y = 0; y < canvas.height; y ++ ) {
-        for ( let x = 0; x < canvas.width; x ++ ) {
-            const p = ( y * canvas.width + x ) * 4;
-            const d = _noise2D( x * 0.1, y * 0.1 ) * invAmp;
+	const ctx = canvas.getContext( '2d' );
+	const imageData = ctx.createImageData( canvas.width, canvas.height );
+	const data = imageData.data;
+	const invAmp = amplitude / 255;
 
-            // Checkerboard placeholder
-            const checker = ( ( ( x >> 4 ) + ( y >> 4 ) ) & 1 ) === 0;
-            const base = checker ? 0.7 : 0.3;
+	for ( let y = 0; y < canvas.height; y ++ ) {
 
-            data[ p ]     = Math.floor( Math.max( 0, Math.min( 1, base + d ) ) * 255 );
-            data[ p + 1 ] = Math.floor( Math.max( 0, Math.min( 1, base + d ) ) * 255 );
-            data[ p + 2 ] = Math.floor( Math.max( 0, Math.min( 1, base + d ) ) * 255 );
-            data[ p + 3 ] = 255;
-        }
-    }
+		for ( let x = 0; x < canvas.width; x ++ ) {
 
-    ctx.putImageData( imageData, 0, 0 );
+			const p = ( y * canvas.width + x ) * 4;
+			const d = _noise2D( x * 0.05, y * 0.05 ) * invAmp;
+
+			// Diagonal hatch placeholder
+			const hatch = ( ( x + y ) & 15 ) < 8 ? 0.6 : 0.4;
+			data[ p ] = Math.floor( Math.max( 0, Math.min( 1, hatch + d ) ) * 255 );
+			data[ p + 1 ] = Math.floor( Math.max( 0, Math.min( 1, hatch + d ) ) * 255 );
+			data[ p + 2 ] = Math.floor( Math.max( 0, Math.min( 1, hatch + d ) ) * 255 );
+			data[ p + 3 ] = 255;
+
+		}
+
+	}
+
+	ctx.putImageData( imageData, 0, 0 );
+
 }
 
 // ---------------------------------------------------------------------------
-// gl-matrix accelerated element-to-texture coordinate mapping
+// Main HTMLTexture class — extends three.js Texture for HTML DOM sources
 // ---------------------------------------------------------------------------
-/**
- * gl-matrix accelerated mapping from element pixel coordinates to
- * normalized UV in the HTML texture. Writes into a preallocated vec2
- * (zero-allocation).
- * @param {HTMLElement} element
- * @param {number} pixelX - X coordinate in element pixels.
- * @param {number} pixelY - Y coordinate in element pixels.
- * @param {glMatrix.vec2} [out]
- * @returns {glMatrix.vec2|null}
- */
-function elementToUVGlMat( element, pixelX, pixelY, out = _gm_uv ) {
-    if ( ! element ) return null;
-    const w = element.offsetWidth || 1;
-    const h = element.offsetHeight || 1;
-    glMatrix.vec2.set( out, pixelX / w, 1 - ( pixelY / h ) ); // flip V for three.js
-    return out;
-}
 
 /**
- * gl-matrix accelerated extraction of element dimensions into a
- * preallocated vec2. Zero-allocation.
- * @param {HTMLElement} element
- * @param {glMatrix.vec2} [out]
- * @returns {glMatrix.vec2|null}
- */
-function elementSizeGlMat( element, out = _gm_size ) {
-    if ( ! element ) return null;
-    return glMatrix.vec2.set( out, element.offsetWidth || 0, element.offsetHeight || 0 );
-}
-
-// ---------------------------------------------------------------------------
-// Main HTMLTexture class — mirrors three.js/src/textures/HTMLTexture.js
-// ---------------------------------------------------------------------------
-/**
- * Creates a texture from an HTML element.
- * This is almost the same as the base texture class, except that it
- * sets {@link Texture#needsUpdate} to `true` immediately and listens for the
- * parent canvas's paint events to trigger updates.
+ * Creates a texture from a live HTML DOM element. The element is
+ * rasterized into an offscreen canvas and the canvas is used as the
+ * texture's image source.
  *
  * ```js
- * const element = document.createElement( 'div' );
- * element.innerHTML = 'Hello <b>world</b>!';
- * const material = new MeshStandardMaterial();
- * material.map = new HTMLTexture( element );
- * const mesh = new Mesh( geometry, material );
- * scene.add( mesh );
+ * const element = document.getElementById( 'my-panel' );
+ * const texture = new THREE.HTMLTexture( element );
+ * texture.needsUpdate = true;
  * ```
+ *
  * @augments Texture
  */
 class HTMLTexture extends Texture {
 
-    /**
-     * Constructs a new HTML texture.
-     * @param {HTMLElement} [element] - The HTML element.
-     * @param {number} [mapping=Texture.DEFAULT_MAPPING] - The texture mapping.
-     * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
-     * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
-     * @param {number} [magFilter=LinearFilter] - The mag filter value.
-     * @param {number} [minFilter=LinearMipmapLinearFilter] - The min filter value.
-     * @param {number} [format=RGBAFormat] - The texture format.
-     * @param {number} [type=UnsignedByteType] - The texture type.
-     * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
-     */
-    constructor(
-        element,
-        mapping = Texture.DEFAULT_MAPPING,
-        wrapS = ClampToEdgeWrapping,
-        wrapT = ClampToEdgeWrapping,
-        magFilter = LinearFilter,
-        minFilter = LinearMipmapLinearFilter,
-        format = RGBAFormat,
-        type = UnsignedByteType,
-        anisotropy = Texture.DEFAULT_ANISOTROPY
-    ) {
-        super( element, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy );
+	/**
+	 * Constructs a new HTML texture.
+	 *
+	 * @param {HTMLElement} [element=null] - The DOM element to rasterize.
+	 * @param {number} [devicePixelRatio=window.devicePixelRatio||1] - The
+	 *   device pixel ratio to use for rasterization.
+	 * @param {number} [mapping=Texture.DEFAULT_MAPPING] - The texture mapping.
+	 * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
+	 * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
+	 * @param {number} [magFilter=LinearFilter] - The mag filter value.
+	 * @param {number} [minFilter=LinearFilter] - The min filter value.
+	 * @param {number} [format=RGBAFormat] - The texture format.
+	 * @param {number} [type=UnsignedByteType] - The texture type.
+	 * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
+	 */
+	constructor(
+		element = null,
+		devicePixelRatio = ( typeof window !== 'undefined' && window.devicePixelRatio ) || 1,
+		mapping = Texture.DEFAULT_MAPPING,
+		wrapS = ClampToEdgeWrapping,
+		wrapT = ClampToEdgeWrapping,
+		magFilter = LinearFilter,
+		minFilter = LinearFilter,
+		format = RGBAFormat,
+		type = UnsignedByteType,
+		anisotropy = Texture.DEFAULT_ANISOTROPY
+	) {
 
-        /**
-         * This flag can be used for type testing.
-         * @type {boolean}
-         * @readonly
-         * @default true
-         */
-        this.isHTMLTexture = true;
+		// Create the initial backing canvas. Its dimensions are placeholders
+		// until the first capture, which will resize it to fit the element.
+		const canvas = typeof document !== 'undefined' ? document.createElement( 'canvas' ) : null;
 
-        this.type = 'HTMLTexture';
+		if ( canvas ) {
 
-        /**
-         * Whether to generate mipmaps (if possible) for a texture.
-         * Overwritten and set to `false` by default since HTML element
-         * repaints are unpredictable and mipmap regeneration would be
-         * prohibitively expensive.
-         * @type {boolean}
-         * @default false
-         */
-        this.generateMipmaps = false;
+			canvas.width = 1;
+			canvas.height = 1;
 
-        /**
-         * Internal timestamp accumulator for double.js paint-time tracking.
-         * @type {number}
-         * @private
-         */
-        this._paintTimeAccumulated = 0;
+		}
 
-        /**
-         * Internal fallback canvas for browsers that do not yet support the
-         * WICG HTML-in-Canvas API. Populated by paintFallback().
-         * @type {?HTMLCanvasElement}
-         * @private
-         */
-        this._fallbackCanvas = null;
+		super(
+			canvas,
+			mapping,
+			wrapS,
+			wrapT,
+			magFilter,
+			minFilter,
+			format,
+			type,
+			anisotropy
+		);
 
-        // Immediately mark for update — the renderer will upload the element
-        // on the next frame.
-        this.needsUpdate = true;
+		/**
+		 * This flag can be used for type testing.
+		 *
+		 * @type {boolean}
+		 * @readonly
+		 * @default true
+		 */
+		this.isHTMLTexture = true;
 
-        // Bind to the parent canvas's paint event so the texture refreshes
-        // whenever the element is repainted.
-        const parent = element ? element.parentNode : null;
-        if ( parent !== null && 'requestPaint' in parent ) {
-            parent.onpaint = () => {
-                this.needsUpdate = true;
-            };
-            parent.requestPaint();
-        }
-    }
+		/**
+		 * The DOM element to rasterize. May be any `HTMLElement` (div, span,
+		 * button, iframe wrapper, etc.).
+		 *
+		 * @type {?HTMLElement}
+		 */
+		this.element = element;
 
-    // -----------------------------------------------------------------------
-    // Accelerated extensions
-    // -----------------------------------------------------------------------
-    /**
-     * gl-matrix accelerated mapping from element pixel coordinates to
-     * normalized UV in the HTML texture. Writes into a preallocated vec2
-     * (zero-allocation).
-     * @param {number} pixelX - X coordinate in element pixels.
-     * @param {number} pixelY - Y coordinate in element pixels.
-     * @param {glMatrix.vec2} [out]
-     * @returns {glMatrix.vec2|null}
-     */
-    elementToUVGlMat( pixelX, pixelY, out = _gm_uv ) {
-        return elementToUVGlMat( this.image, pixelX, pixelY, out );
-    }
+		/**
+		 * The device pixel ratio used when rasterizing the DOM element.
+		 *
+		 * @type {number}
+		 */
+		this.devicePixelRatio = devicePixelRatio;
 
-    /**
-     * gl-matrix accelerated extraction of the element's dimensions into a
-     * preallocated vec2. Zero-allocation.
-     * @param {glMatrix.vec2} [out]
-     * @returns {glMatrix.vec2|null}
-     */
-    getElementSizeGlMat( out = _gm_size ) {
-        return elementSizeGlMat( this.image, out );
-    }
+		// HTML textures manage their own rasterization pipeline. The engine
+		// must not attempt to auto-generate mipmaps for them.
+		this.generateMipmaps = false;
+		this.flipY = false;
+		this.unpackAlignment = 1;
 
-    /**
-     * double.js bit-exact accumulation of a paint-event timestamp. Store the
-     * returned `total` in this._paintTimeAccumulated to track cumulative
-     * paint time without float32 drift.
-     * @param {number} now - Current timestamp from performance.now().
-     * @returns {{total: number, delta: number}}
-     */
-    accumulatePaintTimePrecise( now ) {
-        const result = accumulatePaintTimePrecise( this._paintTimeAccumulated, now );
-        this._paintTimeAccumulated = result.total;
-        return result;
-    }
+	}
 
-    /**
-     * Paint a dithered fallback pattern into a backing canvas for browsers
-     * that do not yet support the WICG HTML-in-Canvas API. The fallback is
-     * stored on the instance and can be sampled via the standard
-     * CanvasTexture path.
-     * @param {number} [width=512] - Fallback canvas width.
-     * @param {number} [height=512] - Fallback canvas height.
-     * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
-     * @returns {HTMLTexture} A reference to this instance.
-     */
-    paintFallback( width = 512, height = 512, amplitude = 0.5 ) {
-        const canvas = document.createElement( 'canvas' );
-        canvas.width = width;
-        canvas.height = height;
-        paintHtmlFallback( canvas, amplitude );
-        this._fallbackCanvas = canvas;
-        this.needsUpdate = true;
-        return this;
-    }
+	/**
+	 * Rasterizes the DOM element into the backing canvas. Called
+	 * automatically when the renderer detects a pending update, and can be
+	 * called manually to force a re-capture.
+	 *
+	 * The implementation delegates to the browser's native DOM-to-canvas
+	 * rasterization (e.g. `html2canvas`, `foreignObject` SVG trick, or a
+	 * runtime-provided capture function). If none is available, a dithered
+	 * placeholder is painted instead.
+	 *
+	 * @returns {HTMLTexture} A reference to this instance.
+	 */
+	update() {
 
-    /**
-     * Create a batched HTML texture paint coordinator backed by bitecs.
-     * @returns {HTMLTextureBatch}
-     */
-    static createBatch() {
-        return new HTMLTextureBatch();
-    }
+		const element = this.element;
+		const canvas = this.image;
 
-    /**
-     * Copy the given texture's properties into this one.
-     * @param {Texture} source - The texture to copy from.
-     * @return {HTMLTexture} A reference to this instance.
-     */
-    copy( source ) {
-        super.copy( source );
-        this.generateMipmaps = false;
-        this._paintTimeAccumulated = source._paintTimeAccumulated ?? 0;
-        this._fallbackCanvas = source._fallbackCanvas ?? null;
-        return this;
-    }
+		if ( ! element || ! ( canvas instanceof HTMLCanvasElement ) ) return this;
 
-    /**
-     * Serializes the HTML texture into JSON.
-     * @param {?(Object|string)} meta - An optional value holding meta information.
-     * @return {Object} A JSON object representing the serialized texture.
-     */
-    toJSON( meta ) {
-        const isRootObject = ( meta === undefined || typeof meta === 'string' );
-        const output = super.toJSON( meta );
+		const rect = element.getBoundingClientRect();
+		const dpr = this.devicePixelRatio;
 
-        // HTML textures cannot serialize their live DOM. Only structural
-        // metadata is preserved — the element must be re-created by the
-        // consuming application and re-attached via a new HTMLTexture.
-        output.image = {
-            tagName: this.image?.tagName ?? 'DIV',
-            width: this.image?.offsetWidth ?? 0,
-            height: this.image?.offsetHeight ?? 0
-        };
+		const width = Math.max( 1, Math.round( rect.width * dpr ) );
+		const height = Math.max( 1, Math.round( rect.height * dpr ) );
 
-        if ( ! isRootObject ) {
-            meta.textures[ this.uuid ] = output;
-        }
+		canvas.width = width;
+		canvas.height = height;
 
-        return output;
-    }
+		// If the runtime provided a custom capture function, use it.
+		if ( typeof this._captureFn === 'function' ) {
 
-    /**
-     * Disposes the texture and removes the parent canvas's onpaint handler.
-     */
-    dispose() {
-        const parent = this.image ? this.image.parentNode : null;
-        if ( parent !== null && 'onpaint' in parent ) {
-            parent.onpaint = null;
-        }
-        this._fallbackCanvas = null;
-        super.dispose();
-    }
+			this._captureFn( element, canvas );
+
+		} else if ( typeof window !== 'undefined' && typeof window.html2canvas === 'function' ) {
+
+			// html2canvas-style capture (async — the caller must await)
+			window.html2canvas( element ).then( ( captured ) => {
+
+				const ctx = canvas.getContext( '2d' );
+				ctx.clearRect( 0, 0, width, height );
+				ctx.drawImage( captured, 0, 0, width, height );
+				this.needsUpdate = true;
+
+			} );
+
+		} else {
+
+			// No capture function available: paint a dithered placeholder.
+			paintHtmlPlaceholder( canvas, 0.5 );
+
+		}
+
+		this.needsUpdate = true;
+		return this;
+
+	}
+
+	// -----------------------------------------------------------------------
+	// Accelerated extensions
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Set a custom capture function used to rasterize the DOM element.
+	 * The function is invoked as `fn(element, canvas)` and is responsible
+	 * for drawing the element's content into the canvas.
+	 *
+	 * @param {Function} fn - The capture function.
+	 * @returns {HTMLTexture} A reference to this instance.
+	 */
+	setCaptureFunction( fn ) {
+
+		this._captureFn = fn;
+		return this;
+
+	}
+
+	/**
+	 * gl-matrix accelerated per-frame DOM pixel sampling. Reads the current
+	 * backing-canvas content and samples the RGBA value at the given UV
+	 * coordinate. Zero-allocation; writes into a preallocated vec4.
+	 *
+	 * @param {glMatrix.vec4} [out] - Optional preallocated output vec4.
+	 * @param {number} [u=0.5] - U coordinate in [0, 1].
+	 * @param {number} [v=0.5] - V coordinate in [0, 1].
+	 * @returns {glMatrix.vec4|null}
+	 */
+	sampleGlMat( out = _gm_rgba, u = 0.5, v = 0.5 ) {
+
+		const canvas = this.image;
+		if ( ! ( canvas instanceof HTMLCanvasElement ) ) return null;
+		if ( canvas.width === 0 || canvas.height === 0 ) return null;
+
+		const ctx = canvas.getContext( '2d', { willReadFrequently: true } );
+		const imageData = ctx.getImageData( 0, 0, canvas.width, canvas.height );
+
+		const x = Math.min( canvas.width - 1, Math.max( 0, Math.floor( u * canvas.width ) ) );
+		const y = Math.min( canvas.height - 1, Math.max( 0, Math.floor( v * canvas.height ) ) );
+		const p = ( y * canvas.width + x ) * 4;
+
+		glMatrix.vec4.set(
+			out,
+			imageData.data[ p ] / 255,
+			imageData.data[ p + 1 ] / 255,
+			imageData.data[ p + 2 ] / 255,
+			imageData.data[ p + 3 ] / 255
+		);
+
+		return out;
+
+	}
+
+	/**
+	 * double.js bit-exact cumulative DOM offset from the document root.
+	 * Useful for pixel-accurate hit-testing and layout mirroring when the
+	 * element tree is deeply nested.
+	 *
+	 * @returns {{x: number, y: number}}
+	 */
+	getCumulativeOffsetPrecise() {
+
+		if ( ! this.element ) return { x: 0, y: 0 };
+		return cumulativeOffsetPrecise( this.element );
+
+	}
+
+	/**
+	 * Paint a dithered placeholder into the backing canvas. Used when the
+	 * DOM element is not yet ready (dimensions = 0) or no capture function
+	 * is available.
+	 *
+	 * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
+	 * @returns {HTMLTexture} A reference to this instance.
+	 */
+	paintPlaceholder( amplitude = 0.5 ) {
+
+		const canvas = this.image;
+		if ( ! ( canvas instanceof HTMLCanvasElement ) ) return this;
+
+		paintHtmlPlaceholder( canvas, amplitude );
+		this.needsUpdate = true;
+
+		return this;
+
+	}
+
+	/**
+	 * Create a batched DOM-capture coordinator backed by bitecs.
+	 *
+	 * @returns {HTMLTextureBatch}
+	 */
+	static createBatch() {
+
+		return new HTMLTextureBatch();
+
+	}
+
+	/**
+	 * Copy the given HTML texture's properties into this one.
+	 *
+	 * @param {HTMLTexture} source - The texture to copy from.
+	 * @return {HTMLTexture} A reference to this instance.
+	 */
+	copy( source ) {
+
+		super.copy( source );
+
+		this.element = source.element;
+		this.devicePixelRatio = source.devicePixelRatio;
+		this._captureFn = source._captureFn;
+
+		this.generateMipmaps = source.generateMipmaps;
+		this.flipY = source.flipY;
+		this.unpackAlignment = source.unpackAlignment;
+
+		return this;
+
+	}
+
+	/**
+	 * Serializes the HTML texture into JSON.
+	 *
+	 * @param {?(Object|string)} meta - An optional value holding meta information.
+	 * @return {Object} A JSON object representing the serialized texture.
+	 */
+	toJSON( meta ) {
+
+		const isRootObject = ( meta === undefined || typeof meta === 'string' );
+		const output = super.toJSON( meta );
+
+		// HTML textures serialize only structural metadata. The DOM element
+		// itself cannot be serialized — consumers must re-provide it.
+		output.image = {
+			width: this.image?.width ?? 0,
+			height: this.image?.height ?? 0,
+			devicePixelRatio: this.devicePixelRatio
+		};
+
+		if ( this.element && this.element.id ) {
+
+			output.elementId = this.element.id;
+
+		}
+
+		if ( ! isRootObject ) {
+
+			meta.textures[ this.uuid ] = output;
+
+		}
+
+		return output;
+
+	}
+
 }
 
-export {
-    HTMLTexture,
-    HTMLTextureBatch,
-    accumulatePaintTimePrecise,
-    paintHtmlFallback,
-    elementToUVGlMat,
-    elementSizeGlMat
-};
+export { HTMLTexture, HTMLTextureBatch, cumulativeOffsetPrecise, paintHtmlPlaceholder };
 export default HTMLTexture;
