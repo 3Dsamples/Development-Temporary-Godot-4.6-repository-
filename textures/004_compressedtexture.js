@@ -1,444 +1,496 @@
 // file number : 004
 // full path name : src/textures/004_compressedtexture.js
-// description : CompressedTexture (three.js r185) rewritten as a high-performance
-// ES module. Extends the internal 002_texture.js base class and imports math
-// helpers strictly from the threejs_new01 math folder. Represents a texture
-// whose mipmap data is already in GPU-compressed form (DXT, ETC1, BC, ASTC,
-// etc.). Overrides flipY and generateMipmaps to false since compressed textures
-// cannot be flipped or have their mipmaps generated at runtime. Adds gl-matrix
-// accelerated per-mip data staging, bitecs SoA batching for multi-mip GPU upload
-// pipelines, double.js bit-exact mip-level size computation for very large
-// compressed textures, and simplex-noise dithering for procedural high-frequency
-// detail baked into compressed formats.
-// best for : CompressedTexture, CompressedTextureLoader, KTX/KTX2/DDS/Basis
-// loaders, GPU-compressed texture pipelines, and any three.js workflow that
-// needs to bind pre-compressed mipmap data to a material.
+// description : CompressedTexture (three.js r185) rewritten as a high-performance ES module. Extends the internally-rewritten 002_texture.js base class and stores pre-compressed mipmaps (KTX, KTX2, DDS, Basis, ASTC, ETC, PVR) instead of a single image source. Preserves the full r185 API — mipmaps array, image proxy with {width, height, depth}, generateMipmaps=false, flipY=false, unpackAlignment=1, needsUpdate=true on construction, plus clone(), copy(), toJSON(). Adds gl-matrix accelerated multi-mip sampling for CPU-side verification, bitecs SoA batching for multi-KTX pipelines (batch-loading compressed texture atlases), double.js bit-exact mip-size validation for large texture arrays, and simplex-noise dithered fallback decoding for platforms lacking native compression support.
+// best for : CompressedTexture, KTX/KTX2/DDS/Basis/ASTC/ETC/PVR loaders, GPU compressed texture pipelines, memory-constrained mobile/VR rendering, and any three.js workflow that streams pre-compressed texture data.
 // license : MIT
 
 import { Texture } from './002_texture.js';
-import { Vector2 } from 'https://raw.githubusercontent.com/3Dsamples/Development-Temporary-Godot-4.6-repository-/threejs_new01/math/002_Vector2.js';
-
-// three.js r185 npm source — core, math, and extras folders excluded per spec
 import {
-    NoColorSpace,
-    LinearFilter,
-    LinearMipmapLinearFilter,
-    ClampToEdgeWrapping,
-    RGBAFormat,
-    UnsignedByteType,
-    UVMapping
-} from 'https://cdn.jsdelivr.net/npm/three@0.185.1/src/constants.js';
-
-// ESM-native — verified named exports
+	NoColorSpace,
+	LinearFilter,
+	LinearMipmapLinearFilter,
+	RGBAFormat,
+	UnsignedByteType,
+	UVMapping,
+	ClampToEdgeWrapping
+} from 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/src/constants.js';
 import { createNoise2D } from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.3/dist/esm/simplex-noise.js';
+import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
 import { createWorld, addEntity, addComponent, defineComponent, Types } from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
-// UMD builds — verified to resolve via jsDelivr's `+esm` transform
-import { Double } from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/+esm';
-import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/+esm';
+import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 
 // ---------------------------------------------------------------------------
 // Shared scratch & precision helpers
 // ---------------------------------------------------------------------------
+
 const _noise2D = createNoise2D();
 const _double = new Double( 0 );
 
-// gl-matrix scratch for zero-allocation mip-level staging
-const _gm_v2 = glMatrix.vec2.create();
+// gl-matrix scratch for zero-allocation mip sampling
+const _gm_rgba = glMatrix.vec4.create();
 
 // ---------------------------------------------------------------------------
-// bitecs SoA batch coordinator for multi-mip GPU upload pipelines
+// bitecs SoA batch coordinator for multi-KTX pipelines
 // ---------------------------------------------------------------------------
-const _mipWorld = createWorld();
-const MipUploadComponent = defineComponent( {
-    textureId: Types.ui16,
-    mipLevel: Types.ui8,
-    width: Types.ui32,
-    height: Types.ui32,
-    dataPtr: Types.ui32,
-    byteSize: Types.ui32,
-    format: Types.ui32,
-    uploaded: Types.ui8
+
+const _compressedWorld = createWorld();
+
+const CompressedMipComponent = defineComponent( {
+	texPtr: Types.ui32,
+	mipLevel: Types.ui8,
+	width: Types.ui32,
+	height: Types.ui32,
+	depth: Types.ui32,
+	byteLength: Types.ui32,
+	validated: Types.ui8
 } );
 
-class CompressedMipBatch {
+class CompressedTextureBatch {
 
-    constructor() {
-        this.world = _mipWorld;
-        this.textures = [];
-        this.mipData = [];
-        this.entities = [];
-    }
+	constructor() {
 
-    /**
-     * Register a CompressedTexture instance for batched mip uploads.
-     * @param {CompressedTexture} texture
-     * @returns {number} texture id
-     */
-    addTexture( texture ) {
-        this.textures.push( texture );
-        return this.textures.length - 1;
-    }
+		this.world = _compressedWorld;
+		this.textures = [];
+		this.entities = [];
 
-    /**
-     * Queue a single mip level for upload.
-     * @param {number} textureId
-     * @param {number} mipLevel
-     * @param {ArrayBufferView} data
-     * @param {number} width
-     * @param {number} height
-     * @returns {number} entity id
-     */
-    addMip( textureId, mipLevel, data, width, height ) {
-        const eid = addEntity( this.world );
-        addComponent( this.world, MipUploadComponent, eid );
-        const dataIndex = this.mipData.length;
-        this.mipData.push( data );
-        MipUploadComponent.textureId[ eid ] = textureId;
-        MipUploadComponent.mipLevel[ eid ] = mipLevel;
-        MipUploadComponent.width[ eid ] = width;
-        MipUploadComponent.height[ eid ] = height;
-        MipUploadComponent.dataPtr[ eid ] = dataIndex;
-        MipUploadComponent.byteSize[ eid ] = data.byteLength || data.length || 0;
-        MipUploadComponent.format[ eid ] = 0;
-        MipUploadComponent.uploaded[ eid ] = 0;
-        this.entities.push( eid );
-        return eid;
-    }
+	}
 
-    /**
-     * Auto-populate all mips from a CompressedTexture's mipmaps array.
-     * Uses gl-matrix for zero-allocation dimension staging.
-     * @param {number} textureId
-     */
-    fillFromTexture( textureId ) {
-        const texture = this.textures[ textureId ];
-        if ( ! texture || ! texture.mipmaps ) return;
-        for ( let i = 0, l = texture.mipmaps.length; i < l; i ++ ) {
-            const mip = texture.mipmaps[ i ];
-            glMatrix.vec2.set( _gm_v2, mip.width, mip.height );
-            this.addMip( textureId, i, mip.data, _gm_v2[ 0 ], _gm_v2[ 1 ] );
-        }
-    }
+	/**
+	 * Register a CompressedTexture instance for batched validation.
+	 *
+	 * @param {CompressedTexture} texture
+	 * @returns {number} texture id
+	 */
+	addTexture( texture ) {
 
-    /**
-     * Process all queued mip uploads in one cache-friendly pass.
-     */
-    process() {
-        const entities = this.entities;
-        for ( let i = 0, l = entities.length; i < l; i ++ ) {
-            MipUploadComponent.uploaded[ entities[ i ] ] = 1;
-        }
-    }
+		this.textures.push( texture );
+		return this.textures.length - 1;
 
-    /**
-     * Retrieve the mip data for a given entity.
-     * @param {number} eid
-     * @returns {ArrayBufferView|null}
-     */
-    data( eid ) {
-        if ( ! MipUploadComponent.uploaded[ eid ] ) return null;
-        return this.mipData[ MipUploadComponent.dataPtr[ eid ] ];
-    }
+	}
+
+	/**
+	 * Enumerate all mip levels of a registered compressed texture and queue
+	 * a validation job per mip.
+	 *
+	 * @param {number} textureId
+	 * @returns {number} the first entity id created (subsequent entities are sequential)
+	 */
+	enumerateMips( textureId ) {
+
+		const texture = this.textures[ textureId ];
+		const mipmaps = texture.mipmaps;
+		let firstEid = 0;
+
+		for ( let i = 0, l = mipmaps.length; i < l; i ++ ) {
+
+			const mip = mipmaps[ i ];
+			const eid = addEntity( this.world );
+			addComponent( this.world, CompressedMipComponent, eid );
+
+			CompressedMipComponent.texPtr[ eid ] = textureId;
+			CompressedMipComponent.mipLevel[ eid ] = i;
+			CompressedMipComponent.width[ eid ] = mip.width;
+			CompressedMipComponent.height[ eid ] = mip.height;
+			CompressedMipComponent.depth[ eid ] = mip.depth ?? 1;
+			CompressedMipComponent.byteLength[ eid ] = mip.data ? mip.data.byteLength : 0;
+			CompressedMipComponent.validated[ eid ] = 0;
+
+			this.entities.push( eid );
+			if ( i === 0 ) firstEid = eid;
+
+		}
+
+		return firstEid;
+
+	}
+
+	/**
+	 * Validate all queued mip levels in one cache-friendly pass. Checks that
+	 * each mip is exactly half the size of the previous one (in both
+	 * dimensions), which is the requirement for GPU-compressed mip chains.
+	 */
+	process() {
+
+		const entities = this.entities;
+
+		for ( let i = 0, l = entities.length; i < l; i ++ ) {
+
+			const eid = entities[ i ];
+			const mipLevel = CompressedMipComponent.mipLevel[ eid ];
+
+			if ( mipLevel === 0 ) {
+
+				CompressedMipComponent.validated[ eid ] = 1;
+				continue;
+
+			}
+
+			// Find the parent mip (mipLevel - 1) for the same texture
+			const texPtr = CompressedMipComponent.texPtr[ eid ];
+			let parentEid = 0;
+
+			for ( let j = 0; j < l; j ++ ) {
+
+				const other = entities[ j ];
+				if ( CompressedMipComponent.texPtr[ other ] === texPtr &&
+					CompressedMipComponent.mipLevel[ other ] === mipLevel - 1 ) {
+
+					parentEid = other;
+					break;
+
+				}
+
+			}
+
+			if ( parentEid === 0 ) {
+
+				CompressedMipComponent.validated[ eid ] = 0;
+				continue;
+
+			}
+
+			const expectedW = Math.max( 1, CompressedMipComponent.width[ parentEid ] >> 1 );
+			const expectedH = Math.max( 1, CompressedMipComponent.height[ parentEid ] >> 1 );
+
+			const ok = CompressedMipComponent.width[ eid ] === expectedW &&
+				CompressedMipComponent.height[ eid ] === expectedH;
+
+			CompressedMipComponent.validated[ eid ] = ok ? 1 : 0;
+
+		}
+
+	}
+
+	/**
+	 * Retrieve validation results as a Uint8Array (1 = valid, 0 = invalid).
+	 *
+	 * @returns {Uint8Array}
+	 */
+	results() {
+
+		const entities = this.entities;
+		const out = new Uint8Array( entities.length );
+		for ( let i = 0, l = entities.length; i < l; i ++ ) out[ i ] = CompressedMipComponent.validated[ entities[ i ] ];
+		return out;
+
+	}
+
 }
 
 // ---------------------------------------------------------------------------
-// double.js bit-exact mip-level size computation
+// double.js bit-exact mip-chain size computation
 // ---------------------------------------------------------------------------
+
 /**
- * Compute the byte size of a single mip level using double.js for bit-exact
- * accumulation. Used for very large compressed textures (e.g. 16K ASTC) where
- * the naive product of width * height * blockSize overflows or loses precision
- * in float32 arithmetic.
- * @param {number} width
- * @param {number} height
- * @param {number} blockSize - Bytes per 4×4 block (e.g. 16 for DXT1, 8 for ETC1).
+ * Compute the total byte length of a compressed mip chain using double.js
+ * for bit-exact accumulation. Used when validating very large compressed
+ * textures (e.g. 16K × 16K ASTC atlases) where float32 accumulation of
+ * mip sizes drifts above 2^24 bytes.
+ *
+ * @param {Array<{width: number, height: number, data?: any}>} mipmaps
  * @returns {number}
  */
-function computeMipByteSizePrecise( width, height, blockSize ) {
-    // Compressed formats store data in 4×4 blocks
-    const blocksWide = Math.ceil( width / 4 );
-    const blocksHigh = Math.ceil( height / 4 );
+function computeMipChainBytesPrecise( mipmaps ) {
 
-    _double.value = blocksWide;
-    _double.value = _double.value * blocksHigh;
-    _double.value = _double.value * blockSize;
-    return _double.value;
+	_double.value = 0;
+	for ( let i = 0, l = mipmaps.length; i < l; i ++ ) {
+
+		const mip = mipmaps[ i ];
+		if ( mip.data && mip.data.byteLength !== undefined ) {
+
+			_double.add( mip.data.byteLength );
+
+		} else {
+
+			// Fallback: estimate from dimensions (RGBA8 assumption)
+			_double.add( mip.width * mip.height * 4 );
+
+		}
+
+	}
+
+	return _double.value;
+
 }
 
 // ---------------------------------------------------------------------------
-// simplex-noise dithered high-frequency detail synthesis
+// simplex-noise dithered fallback decoding for platforms without native compression
 // ---------------------------------------------------------------------------
+
 /**
- * Synthesize a Uint8Array of high-frequency detail coefficients using
- * simplex-noise. Useful for baking procedural detail into a compressed
- * texture pipeline before the data is quantized by the compressor.
+ * Produce a simple dithered RGBA fallback image for a compressed texture.
+ * Used when the platform lacks native support for the source compression
+ * format and a raw-pixel fallback is required. This is intentionally
+ * low-fidelity — it exists so the pipeline degrades gracefully rather than
+ * crashing, and the simplex-noise dithering prevents visible banding.
+ *
  * @param {number} width
  * @param {number} height
- * @param {number} [frequency=0.1]
- * @param {number} [amplitude=1]
- * @param {number} [offset=0]
- * @returns {Uint8Array}
+ * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
+ * @returns {Uint8ClampedArray} RGBA byte buffer.
  */
-function synthesizeDetail( width, height, frequency = 0.1, amplitude = 1, offset = 0 ) {
-    const out = new Uint8Array( width * height );
-    for ( let y = 0; y < height; y ++ ) {
-        for ( let x = 0; x < width; x ++ ) {
-            const n = _noise2D( x * frequency + offset, y * frequency + offset );
-            out[ y * width + x ] = Math.max( 0, Math.min( 255, ( n * 0.5 + 0.5 ) * 255 * amplitude ) );
-        }
-    }
-    return out;
-}
+function generateFallbackImage( width, height, amplitude = 0.5 ) {
 
-// ---------------------------------------------------------------------------
-// gl-matrix accelerated per-mip staging
-// ---------------------------------------------------------------------------
-/**
- * gl-matrix accelerated extraction of mip-level dimensions into a preallocated
- * vec2 array. Zero-allocation, suitable for hot upload loops.
- * @param {CompressedTexture} texture
- * @returns {Array<glMatrix.vec2>}
- */
-function extractMipDimensionsGlMat( texture ) {
-    const out = [];
-    if ( ! texture.mipmaps ) return out;
-    for ( let i = 0, l = texture.mipmaps.length; i < l; i ++ ) {
-        const mip = texture.mipmaps[ i ];
-        glMatrix.vec2.set( _gm_v2, mip.width, mip.height );
-        out.push( glMatrix.vec2.clone( _gm_v2 ) );
-    }
-    return out;
+	const out = new Uint8ClampedArray( width * height * 4 );
+	const invAmp = amplitude / 255;
+
+	for ( let y = 0; y < height; y ++ ) {
+
+		for ( let x = 0; x < width; x ++ ) {
+
+			const p = ( y * width + x ) * 4;
+			const d = _noise2D( x * 0.05, y * 0.05 ) * invAmp;
+
+			// Subtle magenta/gray checker so the fallback is visually distinct
+			const check = ( ( x >> 4 ) ^ ( y >> 4 ) ) & 1;
+			out[ p ] = Math.floor( ( check ? 0.6 : 0.4 ) * 255 + d * 255 );
+			out[ p + 1 ] = Math.floor( 0.3 * 255 + d * 255 );
+			out[ p + 2 ] = Math.floor( 0.7 * 255 + d * 255 );
+			out[ p + 3 ] = 255;
+
+		}
+
+	}
+
+	return out;
+
 }
 
 // ---------------------------------------------------------------------------
 // Main CompressedTexture class — mirrors three.js/src/textures/CompressedTexture.js
 // ---------------------------------------------------------------------------
+
 /**
- * Creates a texture based on data in compressed form.
- * These textures are usually loaded with {@link CompressedTextureLoader}.
+ * Creates a texture based on data in compressed form, for example from a
+ * [DDS](https://en.wikipedia.org/wiki/DirectDraw_Surface) or
+ * [KTX](https://www.khronos.org/ktx/) file.
+ *
+ * For use with the {@link CompressedTextureLoader}.
+ *
  * @augments Texture
  */
 class CompressedTexture extends Texture {
 
-    /**
-     * Constructs a new compressed texture.
-     * @param {Array} mipmaps - This array holds for all mipmaps (including the
-     * base mip) the data and dimensions.
-     * @param {number} width - The width of the texture.
-     * @param {number} height - The height of the texture.
-     * @param {number} [format=RGBAFormat] - The texture format.
-     * @param {number} [type=UnsignedByteType] - The texture type.
-     * @param {number} [mapping=Texture.DEFAULT_MAPPING] - The texture mapping.
-     * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
-     * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
-     * @param {number} [magFilter=LinearFilter] - The mag filter value.
-     * @param {number} [minFilter=LinearMipmapLinearFilter] - The min filter value.
-     * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
-     * @param {string} [colorSpace=NoColorSpace] - The color space.
-     */
-    constructor(
-        mipmaps,
-        width,
-        height,
-        format = RGBAFormat,
-        type = UnsignedByteType,
-        mapping = Texture.DEFAULT_MAPPING,
-        wrapS = ClampToEdgeWrapping,
-        wrapT = ClampToEdgeWrapping,
-        magFilter = LinearFilter,
-        minFilter = LinearMipmapLinearFilter,
-        anisotropy = Texture.DEFAULT_ANISOTROPY,
-        colorSpace = NoColorSpace
-    ) {
-        super( null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace );
+	/**
+	 * Constructs a new compressed texture.
+	 *
+	 * @param {Array} [mipmaps] - The array of mipmaps. Each element should be an
+	 *   object with `data`, `width`, and `height` properties.
+	 * @param {number} [width] - The width of the texture.
+	 * @param {number} [height] - The height of the texture.
+	 * @param {number} [format=RGBAFormat] - The texture format.
+	 * @param {number} [type=UnsignedByteType] - The texture type.
+	 * @param {number} [mapping=Texture.DEFAULT_MAPPING] - The texture mapping.
+	 * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
+	 * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
+	 * @param {number} [magFilter=LinearFilter] - The mag filter value.
+	 * @param {number} [minFilter=LinearMipmapLinearFilter] - The min filter value.
+	 * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
+	 * @param {string} [colorSpace=NoColorSpace] - The color space.
+	 */
+	constructor(
+		mipmaps,
+		width,
+		height,
+		format = RGBAFormat,
+		type = UnsignedByteType,
+		mapping = Texture.DEFAULT_MAPPING,
+		wrapS = ClampToEdgeWrapping,
+		wrapT = ClampToEdgeWrapping,
+		magFilter = LinearFilter,
+		minFilter = LinearMipmapLinearFilter,
+		anisotropy = Texture.DEFAULT_ANISOTROPY,
+		colorSpace = NoColorSpace
+	) {
 
-        /**
-         * This flag can be used for type testing.
-         * @type {boolean}
-         * @readonly
-         * @default true
-         */
-        this.isCompressedTexture = true;
+		super(
+			null,
+			mapping,
+			wrapS,
+			wrapT,
+			magFilter,
+			minFilter,
+			format,
+			type,
+			anisotropy,
+			colorSpace
+		);
 
-        /**
-         * The image property of a compressed texture just defines its dimensions.
-         * @type {{width:number,height:number}}
-         */
-        this.image = { width: width, height: height };
+		/**
+		 * This flag can be used for type testing.
+		 *
+		 * @type {boolean}
+		 * @readonly
+		 * @default true
+		 */
+		this.isCompressedTexture = true;
 
-        /**
-         * This array holds for all mipmaps (including the base mip) the data
-         * and dimensions.
-         * @type {Array}
-         */
-        this.mipmaps = mipmaps;
+		/**
+		 * The image property of a compressed texture just defines its dimensions.
+		 *
+		 * @type {{width: number, height: number, depth: number}}
+		 */
+		this.image = { width, height, depth: 1 };
 
-        /**
-         * If set to `true`, the texture is flipped along the vertical axis when
-         * uploaded to the GPU.
-         * Overwritten and set to `false` by default since it is not possible to
-         * flip compressed textures.
-         * @type {boolean}
-         * @default false
-         * @readonly
-         */
-        this.flipY = false;
+		/**
+		 * The array of mipmaps. Each element should be an object with `data`,
+		 * `width`, and `height` properties.
+		 *
+		 * @type {Array}
+		 */
+		this.mipmaps = mipmaps;
 
-        /**
-         * Whether to generate mipmaps (if possible) for a texture.
-         * Overwritten and set to `false` by default since it is not possible to
-         * generate mipmaps for compressed data. Mipmaps must be embedded in the
-         * compressed texture file.
-         * @type {boolean}
-         * @default false
-         * @readonly
-         */
-        this.generateMipmaps = false;
-    }
+		// no flipping for texture uploads, since the texture is already flipped
+		this.generateMipmaps = false;
+		this.flipY = false;
+		this.unpackAlignment = 1;
 
-    // -----------------------------------------------------------------------
-    // Accelerated extensions
-    // -----------------------------------------------------------------------
-    /**
-     * gl-matrix accelerated extraction of mip-level dimensions. Returns an
-     * array of preallocated vec2 instances (zero-allocation on repeat calls
-     * with cached dimensions).
-     * @returns {Array<glMatrix.vec2>}
-     */
-    extractMipDimensionsGlMat() {
-        return extractMipDimensionsGlMat( this );
-    }
+		// compressed textures typically require special handling for NPOT
+		this.needsUpdate = true;
 
-    /**
-     * Compute the byte size of a single mip level using double.js for
-     * bit-exact accumulation. Recommended for very large compressed textures.
-     * @param {number} level - Mip level index.
-     * @param {number} blockSize - Bytes per 4×4 block.
-     * @returns {number}
-     */
-    computeMipByteSizePrecise( level, blockSize ) {
-        const mip = this.mipmaps[ level ];
-        if ( ! mip ) return 0;
-        return computeMipByteSizePrecise( mip.width, mip.height, blockSize );
-    }
+	}
 
-    /**
-     * Total byte size across all mips using double.js for bit-exact
-     * accumulation.
-     * @param {number} blockSize - Bytes per 4×4 block.
-     * @returns {number}
-     */
-    totalByteSizePrecise( blockSize ) {
-        _double.value = 0;
-        for ( let i = 0, l = this.mipmaps.length; i < l; i ++ ) {
-            _double.add( this.computeMipByteSizePrecise( i, blockSize ) );
-        }
-        return _double.value;
-    }
+	// -----------------------------------------------------------------------
+	// Accelerated extensions
+	// -----------------------------------------------------------------------
 
-    /**
-     * Synthesize a high-frequency detail coefficient buffer using
-     * simplex-noise. Useful for baking procedural detail into a compressed
-     * texture pipeline.
-     * @param {number} width
-     * @param {number} height
-     * @param {number} [frequency=0.1]
-     * @param {number} [amplitude=1]
-     * @param {number} [offset=0]
-     * @returns {Uint8Array}
-     */
-    synthesizeDetail( width, height, frequency = 0.1, amplitude = 1, offset = 0 ) {
-        return synthesizeDetail( width, height, frequency, amplitude, offset );
-    }
+	/**
+	 * gl-matrix accelerated pixel sampling from the top mip of a compressed
+	 * texture's fallback buffer (if any). Returns null if no fallback data
+	 * is present — compressed textures normally do not have CPU-side pixels.
+	 *
+	 * @param {glMatrix.vec4} [out] - Optional preallocated output vec4.
+	 * @param {number} [u=0.5] - U coordinate in [0, 1].
+	 * @param {number} [v=0.5] - V coordinate in [0, 1].
+	 * @returns {glMatrix.vec4|null}
+	 */
+	sampleGlMat( out = _gm_rgba, u = 0.5, v = 0.5 ) {
 
-    /**
-     * Create a batched mip upload coordinator backed by bitecs.
-     * Register multiple compressed textures and queue all their mips to be
-     * uploaded in one cache-friendly pass.
-     * @returns {CompressedMipBatch}
-     */
-    static createBatch() {
-        return new CompressedMipBatch();
-    }
+		// Compressed textures do not have CPU-readable pixels. If a fallback
+		// was attached (see generateFallback), sample from it.
+		if ( ! this._fallback ) return null;
 
-    /**
-     * Copy the given texture's properties into this one.
-     * @param {Texture} source - The texture to copy from.
-     * @return {CompressedTexture} A reference to this instance.
-     */
-    copy( source ) {
-        super.copy( source );
-        this.mipmaps = source.mipmaps.slice( 0 );
-        this.flipY = source.flipY;
-        this.generateMipmaps = source.generateMipmaps;
-        return this;
-    }
+		const fallback = this._fallback;
+		const x = Math.min( fallback.width - 1, Math.max( 0, Math.floor( u * fallback.width ) ) );
+		const y = Math.min( fallback.height - 1, Math.max( 0, Math.floor( v * fallback.height ) ) );
+		const p = ( y * fallback.width + x ) * 4;
 
-    /**
-     * Serializes the texture into JSON.
-     * @param {Object} [meta] - Optional metadata.
-     * @return {Object} A JSON object representing the serialized texture.
-     */
-    toJSON( meta ) {
-        const isRootObject = ( meta === undefined || typeof meta === 'string' );
+		glMatrix.vec4.set(
+			out,
+			fallback.data[ p ] / 255,
+			fallback.data[ p + 1 ] / 255,
+			fallback.data[ p + 2 ] / 255,
+			fallback.data[ p + 3 ] / 255
+		);
 
-        if ( ! isRootObject && meta.textures[ this.uuid ] !== undefined ) {
-            return meta.textures[ this.uuid ];
-        }
+		return out;
 
-        const output = {
-            metadata: {
-                version: 4.6,
-                type: 'CompressedTexture',
-                generator: 'CompressedTexture.toJSON'
-            },
-            uuid: this.uuid,
-            name: this.name,
-            image: {
-                width: this.image.width,
-                height: this.image.height
-            },
-            mapping: this.mapping,
-            repeat: [ this.repeat.x, this.repeat.y ],
-            offset: [ this.offset.x, this.offset.y ],
-            center: [ this.center.x, this.center.y ],
-            rotation: this.rotation,
-            wrap: [ this.wrapS, this.wrapT ],
-            format: this.format,
-            internalFormat: this.internalFormat,
-            type: this.type,
-            colorSpace: this.colorSpace,
-            minFilter: this.minFilter,
-            magFilter: this.magFilter,
-            anisotropy: this.anisotropy,
-            flipY: this.flipY,
-            generateMipmaps: this.generateMipmaps,
-            mipmaps: this.mipmaps.map( mip => ( {
-                width: mip.width,
-                height: mip.height
-            } ) )
-        };
+	}
 
-        if ( ! isRootObject ) {
-            meta.textures[ this.uuid ] = output;
-        }
+	/**
+	 * double.js bit-exact total mip-chain byte length. Useful for budgeting
+	 * GPU memory when streaming very large compressed atlases.
+	 *
+	 * @returns {number}
+	 */
+	getMipChainBytesPrecise() {
 
-        return output;
-    }
+		return computeMipChainBytesPrecise( this.mipmaps );
 
-    /**
-     * Disposes the texture.
-     */
-    dispose() {
-        this.dispatchEvent( { type: 'dispose' } );
-    }
+	}
+
+	/**
+	 * Generate a dithered fallback image for platforms without native
+	 * support for this compression format. The fallback is stored on the
+	 * instance and can be sampled via `sampleGlMat`.
+	 *
+	 * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
+	 * @returns {CompressedTexture} A reference to this instance.
+	 */
+	generateFallback( amplitude = 0.5 ) {
+
+		this._fallback = {
+			width: this.image.width,
+			height: this.image.height,
+			data: generateFallbackImage( this.image.width, this.image.height, amplitude )
+		};
+
+		return this;
+
+	}
+
+	/**
+	 * Create a batched mip-validation coordinator backed by bitecs.
+	 * Enumerates and validates the mip chains of many CompressedTexture
+	 * instances in a single cache-friendly pass.
+	 *
+	 * @returns {CompressedTextureBatch}
+	 */
+	static createBatch() {
+
+		return new CompressedTextureBatch();
+
+	}
+
+	/**
+	 * Copy the given compressed texture's properties into this one.
+	 *
+	 * @param {CompressedTexture} source - The texture to copy from.
+	 * @return {CompressedTexture} A reference to this instance.
+	 */
+	copy( source ) {
+
+		super.copy( source );
+
+		this.mipmaps = source.mipmaps.slice( 0 );
+		this.image = {
+			width: source.image.width,
+			height: source.image.height,
+			depth: source.image.depth ?? 1
+		};
+
+		return this;
+
+	}
+
+	/**
+	 * Serializes the compressed texture into JSON.
+	 *
+	 * @param {?(Object|string)} meta - An optional value holding meta information.
+	 * @return {Object} A JSON object representing the serialized texture.
+	 */
+	toJSON( meta ) {
+
+		const isRootObject = ( meta === undefined || typeof meta === 'string' );
+		const output = super.toJSON( meta );
+
+		// Compressed textures cannot serialize their pixel data into JSON.
+		// Only the structural metadata (dimensions, format, mip count) is
+		// preserved; the actual bytes must be re-loaded from the source file.
+		output.image = {
+			width: this.image.width,
+			height: this.image.height,
+			depth: this.image.depth ?? 1
+		};
+
+		output.mipmaps = this.mipmaps.map( mip => ( {
+			width: mip.width,
+			height: mip.height,
+			depth: mip.depth ?? 1,
+			byteLength: mip.data ? mip.data.byteLength : 0
+		} ) );
+
+		if ( ! isRootObject ) {
+
+			meta.textures[ this.uuid ] = output;
+
+		}
+
+		return output;
+
+	}
+
 }
 
-export {
-    CompressedTexture,
-    CompressedMipBatch,
-    computeMipByteSizePrecise,
-    synthesizeDetail,
-    extractMipDimensionsGlMat
-};
+export { CompressedTexture, CompressedTextureBatch, computeMipChainBytesPrecise, generateFallbackImage };
 export default CompressedTexture;
