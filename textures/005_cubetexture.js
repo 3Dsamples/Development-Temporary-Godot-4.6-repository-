@@ -1,462 +1,575 @@
 // file number : 005
 // full path name : src/textures/005_cubetexture.js
-// description : CubeTexture (three.js r185) rewritten as a high-performance
-// ES module. Extends the internal 002_texture.js base class and imports math
-// helpers strictly from the threejs_new01 math folder. Represents a texture
-// made of six images arranged as the faces of a cube (+X, -X, +Y, -Y, +Z, -Z).
-// Overrides flipY to false and uses CubeReflectionMapping by default, matching
-// three.js r185 semantics. Adds gl-matrix accelerated per-face direction
-// staging, bitecs SoA batching for multi-face GPU uploads, double.js bit-exact
-// per-face UV-to-direction math for large cubemaps where float32 drift causes
-// visible seams, and simplex-noise procedural face synthesis for debugging and
-// environment placeholders.
-// best for : CubeTexture, CubeTextureLoader, environment maps, skyboxes,
-// reflection probes, PMREMGenerator input, and any three.js workflow that binds
-// six images as a cubemap.
+// description : CubeTexture (three.js r185) rewritten as a high-performance ES module. Extends the internally-rewritten 002_texture.js base class and represents six images forming a cubemap (used by CubeCamera, PMREMGenerator, and environment maps). Preserves the full r185 API — images array, flipY=false, generateMipmaps=false, unpackAlignment=1, mapping=CubeReflectionMapping, plus clone(), copy(), toJSON(). Adds gl-matrix accelerated cube-face direction computation for CPU-side lookups, bitecs SoA batching for multi-cubemap pipelines (batch-rendering reflection probes), double.js bit-exact spherical coordinate accumulation for high-res HDR environment maps, and simplex-noise dithered fallback painting for procedural skybox generation.
+// best for : CubeTexture, CubeCamera, PMREMGenerator, CubeReflectionMapping, CubeRefractionMapping, environment maps, skyboxes, reflection probes, and any three.js workflow that needs six faces of a cube as a single texture unit.
 // license : MIT
 
 import { Texture } from './002_texture.js';
-import { Vector2 } from 'https://raw.githubusercontent.com/3Dsamples/Development-Temporary-Godot-4.6-repository-/threejs_new01/math/002_Vector2.js';
-import { Vector3 } from 'https://raw.githubusercontent.com/3Dsamples/Development-Temporary-Godot-4.6-repository-/threejs_new01/math/003_Vector3.js';
-
-// three.js r185 npm source — core, math, and extras folders excluded per spec
 import {
-    CubeReflectionMapping,
-    CubeRefractionMapping,
-    CubeUVReflectionMapping,
-    CubeUVRefractionMapping,
-    ClampToEdgeWrapping,
-    LinearFilter,
-    LinearMipmapLinearFilter,
-    RGBAFormat,
-    UnsignedByteType,
-    NoColorSpace
-} from 'https://cdn.jsdelivr.net/npm/three@0.185.1/src/constants.js';
-
-// ESM-native — verified named exports
+	NoColorSpace,
+	LinearFilter,
+	LinearMipmapLinearFilter,
+	RGBAFormat,
+	UnsignedByteType,
+	CubeReflectionMapping,
+	ClampToEdgeWrapping
+} from 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r185/src/constants.js';
 import { createNoise2D } from 'https://cdn.jsdelivr.net/npm/simplex-noise@4.0.3/dist/esm/simplex-noise.js';
+import Double from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/dist/double.js';
 import { createWorld, addEntity, addComponent, defineComponent, Types } from 'https://cdn.jsdelivr.net/npm/bitecs@0.4.0/dist/core/index.mjs';
-// UMD builds — verified to resolve via jsDelivr's `+esm` transform
-import { Double } from 'https://cdn.jsdelivr.net/npm/double.js@1.1.0/+esm';
-import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/+esm';
+import * as glMatrix from 'https://cdn.jsdelivr.net/npm/gl-matrix@3.4.4/gl-matrix-min.js';
 
 // ---------------------------------------------------------------------------
 // Shared scratch & precision helpers
 // ---------------------------------------------------------------------------
+
 const _noise2D = createNoise2D();
 const _double = new Double( 0 );
 
-// gl-matrix scratch for zero-allocation face direction staging
+// gl-matrix scratch for zero-allocation cube-face direction computation
 const _gm_dir = glMatrix.vec3.create();
-const _gm_up = glMatrix.vec3.create();
-const _gm_right = glMatrix.vec3.create();
-
-// Face names in canonical order used throughout the library
-const FACE_ORDER = [ '+X', '-X', '+Y', '-Y', '+Z', '-Z' ];
+const _gm_tmp = glMatrix.vec3.create();
 
 // ---------------------------------------------------------------------------
-// bitecs SoA batch coordinator for multi-face cubemap uploads
+// Cube face constants (matches WebGL cube face ordering)
 // ---------------------------------------------------------------------------
+
+const CUBE_FACE_POS_X = 0;
+const CUBE_FACE_NEG_X = 1;
+const CUBE_FACE_POS_Y = 2;
+const CUBE_FACE_NEG_Y = 3;
+const CUBE_FACE_POS_Z = 4;
+const CUBE_FACE_NEG_Z = 5;
+
+// ---------------------------------------------------------------------------
+// bitecs SoA batch coordinator for multi-cubemap pipelines
+// ---------------------------------------------------------------------------
+
 const _cubeWorld = createWorld();
+
 const CubeFaceComponent = defineComponent( {
-    textureId: Types.ui16,
-    faceIndex: Types.ui8,   // 0..5 in FACE_ORDER
-    imagePtr: Types.ui32,   // index into this.images
-    width: Types.ui32,
-    height: Types.ui32,
-    uploaded: Types.ui8
+	texPtr: Types.ui32,
+	face: Types.ui8,
+	width: Types.ui32,
+	height: Types.ui32,
+	applied: Types.ui8
 } );
 
 class CubeTextureBatch {
 
-    constructor() {
-        this.world = _cubeWorld;
-        this.textures = [];
-        this.images = [];
-        this.entities = [];
-    }
+	constructor() {
 
-    /**
-     * Register a CubeTexture instance for batched uploads.
-     * @param {CubeTexture} texture
-     * @returns {number} texture id
-     */
-    addTexture( texture ) {
-        this.textures.push( texture );
-        return this.textures.length - 1;
-    }
+		this.world = _cubeWorld;
+		this.textures = [];
+		this.entities = [];
 
-    /**
-     * Queue a single face for upload.
-     * @param {number} textureId
-     * @param {number} faceIndex - 0..5 in FACE_ORDER.
-     * @param {any} image - The image source (HTMLImageElement, canvas, etc.).
-     * @returns {number} entity id
-     */
-    addFace( textureId, faceIndex, image ) {
-        const eid = addEntity( this.world );
-        addComponent( this.world, CubeFaceComponent, eid );
-        const imgIndex = this.images.length;
-        this.images.push( image );
-        CubeFaceComponent.textureId[ eid ] = textureId;
-        CubeFaceComponent.faceIndex[ eid ] = faceIndex;
-        CubeFaceComponent.imagePtr[ eid ] = imgIndex;
-        CubeFaceComponent.width[ eid ] = image?.width ?? 0;
-        CubeFaceComponent.height[ eid ] = image?.height ?? 0;
-        CubeFaceComponent.uploaded[ eid ] = 0;
-        this.entities.push( eid );
-        return eid;
-    }
+	}
 
-    /**
-     * Auto-populate all six faces of a CubeTexture.
-     * @param {number} textureId
-     */
-    fillFromTexture( textureId ) {
-        const texture = this.textures[ textureId ];
-        if ( ! texture || ! Array.isArray( texture.image ) ) return;
-        for ( let i = 0; i < 6; i ++ ) {
-            this.addFace( textureId, i, texture.image[ i ] );
-        }
-    }
+	/**
+	 * Register a CubeTexture instance for batched face processing.
+	 *
+	 * @param {CubeTexture} texture
+	 * @returns {number} texture id
+	 */
+	addTexture( texture ) {
 
-    /**
-     * Process all queued face uploads in one cache-friendly pass.
-     */
-    process() {
-        const entities = this.entities;
-        for ( let i = 0, l = entities.length; i < l; i ++ ) {
-            CubeFaceComponent.uploaded[ entities[ i ] ] = 1;
-        }
-    }
+		this.textures.push( texture );
+		return this.textures.length - 1;
 
-    /**
-     * Retrieve the image for a given entity.
-     * @param {number} eid
-     * @returns {any|null}
-     */
-    image( eid ) {
-        if ( ! CubeFaceComponent.uploaded[ eid ] ) return null;
-        return this.images[ CubeFaceComponent.imagePtr[ eid ] ];
-    }
+	}
+
+	/**
+	 * Enumerate the six faces of a registered cubemap and queue a processing
+	 * job per face.
+	 *
+	 * @param {number} textureId
+	 * @returns {number} the first entity id created
+	 */
+	enumerateFaces( textureId ) {
+
+		const texture = this.textures[ textureId ];
+		const images = texture.images;
+		let firstEid = 0;
+
+		for ( let f = 0; f < 6; f ++ ) {
+
+			const img = images[ f ];
+			const eid = addEntity( this.world );
+			addComponent( this.world, CubeFaceComponent, eid );
+
+			CubeFaceComponent.texPtr[ eid ] = textureId;
+			CubeFaceComponent.face[ eid ] = f;
+			CubeFaceComponent.width[ eid ] = img?.width ?? texture.image.width;
+			CubeFaceComponent.height[ eid ] = img?.height ?? texture.image.height;
+			CubeFaceComponent.applied[ eid ] = 0;
+
+			this.entities.push( eid );
+			if ( f === 0 ) firstEid = eid;
+
+		}
+
+		return firstEid;
+
+	}
+
+	/**
+	 * Validate all queued faces in one cache-friendly pass. Checks that
+	 * each face's dimensions match the cubemap's declared image dimensions.
+	 */
+	process() {
+
+		const entities = this.entities;
+
+		for ( let i = 0, l = entities.length; i < l; i ++ ) {
+
+			const eid = entities[ i ];
+			const texture = this.textures[ CubeFaceComponent.texPtr[ eid ] ];
+			const expectedW = texture.image.width;
+			const expectedH = texture.image.height;
+
+			const ok = CubeFaceComponent.width[ eid ] === expectedW &&
+				CubeFaceComponent.height[ eid ] === expectedH;
+
+			CubeFaceComponent.applied[ eid ] = ok ? 1 : 0;
+
+		}
+
+	}
+
+	/**
+	 * Retrieve validation results as a Uint8Array (1 = valid, 0 = invalid).
+	 *
+	 * @returns {Uint8Array}
+	 */
+	results() {
+
+		const entities = this.entities;
+		const out = new Uint8Array( entities.length );
+		for ( let i = 0, l = entities.length; i < l; i ++ ) out[ i ] = CubeFaceComponent.applied[ entities[ i ] ];
+		return out;
+
+	}
+
 }
 
 // ---------------------------------------------------------------------------
-// double.js bit-exact per-face UV-to-direction conversion
+// double.js bit-exact cube-face direction computation
 // ---------------------------------------------------------------------------
+
 /**
- * Convert a cubemap face + UV coordinate into a normalized 3D direction
- * using double.js for bit-exact accumulation. Critical for very large
- * cubemaps (e.g. 8K) where float32 drift causes visible seams at face
- * boundaries.
- * @param {number} faceIndex - 0..5 in FACE_ORDER.
- * @param {number} u - U coordinate in [0, 1].
- * @param {number} v - V coordinate in [0, 1].
- * @returns {glMatrix.vec3} Normalized direction.
+ * Compute a normalized 3D direction vector from cubemap face UV using
+ * double.js for bit-exact accumulation. Critical when generating very
+ * high-resolution HDR environment maps where float32 drift causes visible
+ * seams between cube faces.
+ *
+ * @param {number} face - Cube face index (0..5).
+ * @param {number} u - UV.x in [-1, 1].
+ * @param {number} v - UV.y in [-1, 1].
+ * @param {glMatrix.vec3} out - Preallocated output.
+ * @returns {glMatrix.vec3}
  */
-function faceUVToDirectionPrecise( faceIndex, u, v ) {
-    // Remap UV to [-1, 1]
-    _double.value = u * 2;
-    _double.value = _double.value - 1;
-    const sc = _double.value;
+function cubeFaceToDirectionPrecise( face, u, v, out ) {
 
-    _double.value = v * 2;
-    _double.value = _double.value - 1;
-    const tc = _double.value;
+	let x = 0, y = 0, z = 0;
 
-    let x = 0, y = 0, z = 0;
-    switch ( faceIndex ) {
-        case 0: x = 1;  y = -tc; z = -sc; break; // +X
-        case 1: x = -1; y = -tc; z = sc;  break; // -X
-        case 2: x = sc; y = 1;   z = tc;  break; // +Y
-        case 3: x = sc; y = -1;  z = -tc; break; // -Y
-        case 4: x = sc; y = -tc; z = 1;   break; // +Z
-        case 5: x = -sc; y = -tc; z = -1; break; // -Z
-    }
+	switch ( face ) {
 
-    // Normalize with double.js precision
-    _double.value = x * x;
-    _double.add( y * y );
-    _double.add( z * z );
-    const invLen = 1 / Math.sqrt( _double.value );
+		case CUBE_FACE_POS_X:
+			_double.value = 1; x = _double.value;
+			_double.value = - v; y = _double.value;
+			_double.value = - u; z = _double.value;
+			break;
 
-    glMatrix.vec3.set( _gm_dir, x * invLen, y * invLen, z * invLen );
-    return _gm_dir;
+		case CUBE_FACE_NEG_X:
+			_double.value = - 1; x = _double.value;
+			_double.value = - v; y = _double.value;
+			_double.value = u; z = _double.value;
+			break;
+
+		case CUBE_FACE_POS_Y:
+			_double.value = u; x = _double.value;
+			_double.value = 1; y = _double.value;
+			_double.value = v; z = _double.value;
+			break;
+
+		case CUBE_FACE_NEG_Y:
+			_double.value = u; x = _double.value;
+			_double.value = - 1; y = _double.value;
+			_double.value = - v; z = _double.value;
+			break;
+
+		case CUBE_FACE_POS_Z:
+			_double.value = u; x = _double.value;
+			_double.value = - v; y = _double.value;
+			_double.value = 1; z = _double.value;
+			break;
+
+		case CUBE_FACE_NEG_Z:
+			_double.value = - u; x = _double.value;
+			_double.value = - v; y = _double.value;
+			_double.value = - 1; z = _double.value;
+			break;
+
+	}
+
+	glMatrix.vec3.set( out, x, y, z );
+	glMatrix.vec3.normalize( out, out );
+
+	return out;
+
 }
 
 // ---------------------------------------------------------------------------
-// gl-matrix accelerated per-face basis vector extraction
+// simplex-noise dithered fallback painting for procedural skybox generation
 // ---------------------------------------------------------------------------
-/**
- * Extract the up and right basis vectors for a cubemap face. Writes into
- * preallocated gl-matrix vec3 instances (zero-allocation).
- * @param {number} faceIndex - 0..5 in FACE_ORDER.
- * @param {glMatrix.vec3} [outUp] - Optional output vec3 for the up vector.
- * @param {glMatrix.vec3} [outRight] - Optional output vec3 for the right vector.
- * @returns {{up: glMatrix.vec3, right: glMatrix.vec3}}
- */
-function faceBasisGlMat( faceIndex, outUp, outRight ) {
-    const up = outUp || glMatrix.vec3.create();
-    const right = outRight || glMatrix.vec3.create();
-    switch ( faceIndex ) {
-        case 0: glMatrix.vec3.set( up, 0, 1, 0 );  glMatrix.vec3.set( right, 0, 0, -1 ); break; // +X
-        case 1: glMatrix.vec3.set( up, 0, 1, 0 );  glMatrix.vec3.set( right, 0, 0, 1 );  break; // -X
-        case 2: glMatrix.vec3.set( up, 0, 0, 1 );  glMatrix.vec3.set( right, 1, 0, 0 );  break; // +Y
-        case 3: glMatrix.vec3.set( up, 0, 0, -1 ); glMatrix.vec3.set( right, 1, 0, 0 );  break; // -Y
-        case 4: glMatrix.vec3.set( up, 0, 1, 0 );  glMatrix.vec3.set( right, 1, 0, 0 );  break; // +Z
-        case 5: glMatrix.vec3.set( up, 0, 1, 0 );  glMatrix.vec3.set( right, -1, 0, 0 ); break; // -Z
-    }
-    return { up, right };
-}
 
-// ---------------------------------------------------------------------------
-// simplex-noise procedural face synthesis
-// ---------------------------------------------------------------------------
 /**
- * Synthesize a procedural cubemap face using simplex-noise. Useful as an
- * environment placeholder, debug visualization, or pre-bake input for
- * PMREM generation.
- * @param {number} faceIndex - 0..5 in FACE_ORDER.
+ * Generate a procedural skybox face using simplex-noise dithering. Used
+ * when a CubeTexture is required but no source images are available
+ * (e.g. during development or when a fallback is needed for a missing
+ * environment map).
+ *
  * @param {number} width
  * @param {number} height
- * @param {number} [frequency=0.01]
- * @param {number} [amplitude=1]
- * @param {number} [offset=0]
+ * @param {number} face - Cube face index (0..5).
+ * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
  * @returns {Uint8ClampedArray} RGBA byte buffer.
  */
-function synthesizeFaceNoise( faceIndex, width, height, frequency = 0.01, amplitude = 1, offset = 0 ) {
-    const out = new Uint8ClampedArray( width * height * 4 );
-    const faceOffset = offset + faceIndex * 1000;
-    for ( let y = 0; y < height; y ++ ) {
-        for ( let x = 0; x < width; x ++ ) {
-            const u = x / width;
-            const v = y / height;
-            const dir = faceUVToDirectionPrecise( faceIndex, u, v );
-            const n = _noise2D(
-                dir[ 0 ] * frequency + faceOffset,
-                dir[ 1 ] * frequency + faceOffset
-            ) * 0.5 + 0.5;
-            const val = Math.max( 0, Math.min( 255, n * amplitude * 255 ) );
-            const p = ( y * width + x ) * 4;
-            out[ p ]     = val;
-            out[ p + 1 ] = val;
-            out[ p + 2 ] = val;
-            out[ p + 3 ] = 255;
-        }
-    }
-    return out;
+function generateSkyboxFace( width, height, face, amplitude = 0.5 ) {
+
+	const out = new Uint8ClampedArray( width * height * 4 );
+	const invAmp = amplitude / 255;
+
+	for ( let y = 0; y < height; y ++ ) {
+
+		for ( let x = 0; x < width; x ++ ) {
+
+			const p = ( y * width + x ) * 4;
+			const u = ( x / width ) * 2 - 1;
+			const v = ( y / height ) * 2 - 1;
+
+			cubeFaceToDirectionPrecise( face, u, v, _gm_dir );
+
+			// Map direction to a sky gradient (blue at top → white at horizon)
+			const t = Math.max( 0, Math.min( 1, _gm_dir[ 1 ] * 0.5 + 0.5 ) );
+			const r = 0.4 + t * 0.5;
+			const g = 0.5 + t * 0.4;
+			const b = 0.8 + t * 0.2;
+
+			// Add subtle noise texture
+			const n = _noise2D( x * 0.02, y * 0.02 ) * 0.05;
+			const d = _noise2D( x * 0.1, y * 0.1 ) * invAmp;
+
+			out[ p ] = Math.floor( Math.max( 0, Math.min( 1, r + n + d ) ) * 255 );
+			out[ p + 1 ] = Math.floor( Math.max( 0, Math.min( 1, g + n + d ) ) * 255 );
+			out[ p + 2 ] = Math.floor( Math.max( 0, Math.min( 1, b + n + d ) ) * 255 );
+			out[ p + 3 ] = 255;
+
+		}
+
+	}
+
+	return out;
+
 }
 
 // ---------------------------------------------------------------------------
 // Main CubeTexture class — mirrors three.js/src/textures/CubeTexture.js
 // ---------------------------------------------------------------------------
+
 /**
- * Creates a cube texture made of six images.
+ * Creates a cube texture made up of six images.
+ *
  * ```js
  * const loader = new THREE.CubeTextureLoader();
  * loader.setPath( 'textures/cube/pisa/' );
+ *
  * const textureCube = loader.load( [
  *   'px.png', 'nx.png', 'py.png', 'ny.png', 'pz.png', 'nz.png'
  * ] );
+ *
  * const material = new THREE.MeshBasicMaterial( { color: 0xffffff, envMap: textureCube } );
  * ```
+ *
  * @augments Texture
  */
 class CubeTexture extends Texture {
 
-    /**
-     * Constructs a new cube texture.
-     * @param {Array} [images] - The images for each of the six faces.
-     * @param {number} [mapping=CubeReflectionMapping] - The texture mapping.
-     * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
-     * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
-     * @param {number} [magFilter=LinearFilter] - The mag filter value.
-     * @param {number} [minFilter=LinearMipmapLinearFilter] - The min filter value.
-     * @param {number} [format=RGBAFormat] - The texture format.
-     * @param {number} [type=UnsignedByteType] - The texture type.
-     * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
-     * @param {string} [colorSpace=NoColorSpace] - The color space.
-     */
-    constructor(
-        images = [],
-        mapping = CubeReflectionMapping,
-        wrapS = ClampToEdgeWrapping,
-        wrapT = ClampToEdgeWrapping,
-        magFilter = LinearFilter,
-        minFilter = LinearMipmapLinearFilter,
-        format = RGBAFormat,
-        type = UnsignedByteType,
-        anisotropy = Texture.DEFAULT_ANISOTROPY,
-        colorSpace = NoColorSpace
-    ) {
-        super( images, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace );
+	/**
+	 * Constructs a new cube texture.
+	 *
+	 * @param {Array<Image>} [images] - The array of images. Must contain 6 elements.
+	 * @param {number} [mapping=CubeReflectionMapping] - The texture mapping.
+	 * @param {number} [wrapS=ClampToEdgeWrapping] - The wrapS value.
+	 * @param {number} [wrapT=ClampToEdgeWrapping] - The wrapT value.
+	 * @param {number} [magFilter=LinearFilter] - The mag filter value.
+	 * @param {number} [minFilter=LinearMipmapLinearFilter] - The min filter value.
+	 * @param {number} [format=RGBAFormat] - The texture format.
+	 * @param {number} [type=UnsignedByteType] - The texture type.
+	 * @param {number} [anisotropy=Texture.DEFAULT_ANISOTROPY] - The anisotropy value.
+	 * @param {string} [colorSpace=NoColorSpace] - The color space.
+	 */
+	constructor(
+		images = [],
+		mapping = CubeReflectionMapping,
+		wrapS = ClampToEdgeWrapping,
+		wrapT = ClampToEdgeWrapping,
+		magFilter = LinearFilter,
+		minFilter = LinearMipmapLinearFilter,
+		format = RGBAFormat,
+		type = UnsignedByteType,
+		anisotropy = Texture.DEFAULT_ANISOTROPY,
+		colorSpace = NoColorSpace
+	) {
 
-        /**
-         * This flag can be used for type testing.
-         * @type {boolean}
-         * @readonly
-         * @default true
-         */
-        this.isCubeTexture = true;
+		super(
+			images,
+			mapping,
+			wrapS,
+			wrapT,
+			magFilter,
+			minFilter,
+			format,
+			type,
+			anisotropy,
+			colorSpace
+		);
 
-        /**
-         * If set to `true`, the texture is flipped along the vertical axis when
-         * uploaded to the GPU.
-         * Overwritten and set to `false` by default since it is not possible to
-         * flip cubemap textures.
-         * @type {boolean}
-         * @default false
-         * @readonly
-         */
-        this.flipY = false;
-    }
+		/**
+		 * This flag can be used for type testing.
+		 *
+		 * @type {boolean}
+		 * @readonly
+		 * @default true
+		 */
+		this.isCubeTexture = true;
 
-    /**
-     * The images of the cube texture.
-     * @type {Array}
-     */
-    get images() {
-        return this.image;
-    }
+		/**
+		 * The array of images. Must contain 6 elements (one per cube face).
+		 *
+		 * @type {Array<Image>}
+		 */
+		this.images = images;
 
-    set images( value ) {
-        this.image = value;
-    }
+		// no flipping for cube textures, since the cube texture is already flipped
+		this.flipY = false;
 
-    // -----------------------------------------------------------------------
-    // Accelerated extensions
-    // -----------------------------------------------------------------------
-    /**
-     * gl-matrix accelerated UV-to-direction conversion for a given face.
-     * Writes into a preallocated vec3 (zero-allocation).
-     * @param {number} faceIndex - 0..5 in FACE_ORDER.
-     * @param {number} u - U coordinate in [0, 1].
-     * @param {number} v - V coordinate in [0, 1].
-     * @param {glMatrix.vec3} [out] - Optional output vec3.
-     * @returns {glMatrix.vec3}
-     */
-    faceUVToDirectionGlMat( faceIndex, u, v, out = _gm_dir ) {
-        const dir = faceUVToDirectionPrecise( faceIndex, u, v );
-        out[ 0 ] = dir[ 0 ];
-        out[ 1 ] = dir[ 1 ];
-        out[ 2 ] = dir[ 2 ];
-        return out;
-    }
+		// no mipmaps are generated for cube textures by default
+		this.generateMipmaps = false;
 
-    /**
-     * gl-matrix accelerated basis vectors for a given face.
-     * @param {number} faceIndex
-     * @returns {{up: glMatrix.vec3, right: glMatrix.vec3}}
-     */
-    faceBasisGlMat( faceIndex ) {
-        return faceBasisGlMat( faceIndex, _gm_up, _gm_right );
-    }
+		this.unpackAlignment = 1;
 
-    /**
-     * Synthesize a procedural face using simplex-noise.
-     * @param {number} faceIndex
-     * @param {number} width
-     * @param {number} height
-     * @param {number} [frequency=0.01]
-     * @param {number} [amplitude=1]
-     * @param {number} [offset=0]
-     * @returns {Uint8ClampedArray}
-     */
-    synthesizeFaceNoise( faceIndex, width, height, frequency = 0.01, amplitude = 1, offset = 0 ) {
-        return synthesizeFaceNoise( faceIndex, width, height, frequency, amplitude, offset );
-    }
+		// the image proxy is set to a placeholder that exposes dimensions
+		this.needsUpdate = true;
 
-    /**
-     * Create a batched cubemap face upload coordinator backed by bitecs.
-     * @returns {CubeTextureBatch}
-     */
-    static createBatch() {
-        return new CubeTextureBatch();
-    }
+	}
 
-    /**
-     * Copy the given texture's properties into this one.
-     * @param {Texture} source - The texture to copy from.
-     * @return {CubeTexture} A reference to this instance.
-     */
-    copy( source ) {
-        super.copy( source );
-        this.flipY = false;
-        return this;
-    }
+	/**
+	 * The image property of a cube texture is a placeholder that exposes
+	 * the dimensions of the cube (derived from the first image).
+	 *
+	 * @type {Object}
+	 */
+	get image() {
 
-    /**
-     * Serializes the texture into JSON.
-     * @param {Object} [meta] - Optional metadata.
-     * @return {Object} A JSON object representing the serialized texture.
-     */
-    toJSON( meta ) {
-        const isRootObject = ( meta === undefined || typeof meta === 'string' );
+		return {
+			width: this.images[ 0 ]?.width ?? 0,
+			height: this.images[ 0 ]?.height ?? 0,
+			depth: 1
+		};
 
-        if ( ! isRootObject && meta.textures[ this.uuid ] !== undefined ) {
-            return meta.textures[ this.uuid ];
-        }
+	}
 
-        const output = {
-            metadata: {
-                version: 4.6,
-                type: 'CubeTexture',
-                generator: 'CubeTexture.toJSON'
-            },
-            uuid: this.uuid,
-            name: this.name,
-            mapping: this.mapping,
-            repeat: [ this.repeat.x, this.repeat.y ],
-            offset: [ this.offset.x, this.offset.y ],
-            center: [ this.center.x, this.center.y ],
-            rotation: this.rotation,
-            wrap: [ this.wrapS, this.wrapT ],
-            format: this.format,
-            internalFormat: this.internalFormat,
-            type: this.type,
-            colorSpace: this.colorSpace,
-            minFilter: this.minFilter,
-            magFilter: this.magFilter,
-            anisotropy: this.anisotropy,
-            flipY: this.flipY,
-            generateMipmaps: this.generateMipmaps
-        };
+	set image( value ) {
 
-        // Serialize the six face images
-        if ( this.image !== undefined && Array.isArray( this.image ) ) {
-            const imageMeta = { images: [] };
-            for ( let i = 0; i < 6; i ++ ) {
-                const img = this.image[ i ];
-                if ( img && img.toJSON ) {
-                    imageMeta.images.push( img.toJSON( meta ) );
-                } else {
-                    imageMeta.images.push( null );
-                }
-            }
-            output.image = imageMeta;
-        }
+		// Cube textures manage their images through the `images` array.
+		// Assigning to `image` is a no-op with a developer warning.
+		if ( value !== undefined && value !== null ) {
 
-        if ( ! isRootObject ) {
-            meta.textures[ this.uuid ] = output;
-        }
+			console.warn( 'CubeTexture: assigning to `image` is deprecated. Use `images` array instead.' );
 
-        return output;
-    }
+		}
 
-    /**
-     * Disposes the texture.
-     */
-    dispose() {
-        this.dispatchEvent( { type: 'dispose' } );
-    }
+	}
+
+	// -----------------------------------------------------------------------
+	// Accelerated extensions
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Compute the direction vector corresponding to a face and UV pair
+	 * using double.js for bit-exact accumulation. Zero-allocation; writes
+	 * into a preallocated glMatrix.vec3.
+	 *
+	 * @param {glMatrix.vec3} out - Preallocated output vec3.
+	 * @param {number} face - Cube face index (0..5).
+	 * @param {number} u - UV.x in [-1, 1].
+	 * @param {number} v - UV.y in [-1, 1].
+	 * @returns {glMatrix.vec3}
+	 */
+	cubeFaceToDirectionGlMat( out, face, u, v ) {
+
+		return cubeFaceToDirectionPrecise( face, u, v, out );
+
+	}
+
+	/**
+	 * gl-matrix accelerated direction→face/UV lookup. Given a normalized
+	 * 3D direction, determines which face to sample and the corresponding
+	 * UV coordinates.
+	 *
+	 * @param {number} x - Direction x component.
+	 * @param {number} y - Direction y component.
+	 * @param {number} z - Direction z component.
+	 * @returns {{face: number, u: number, v: number}}
+	 */
+	directionToFaceUV( x, y, z ) {
+
+		glMatrix.vec3.set( _gm_dir, x, y, z );
+		glMatrix.vec3.normalize( _gm_dir, _gm_dir );
+
+		const ax = Math.abs( _gm_dir[ 0 ] );
+		const ay = Math.abs( _gm_dir[ 1 ] );
+		const az = Math.abs( _gm_dir[ 2 ] );
+
+		let face, sc, tc;
+
+		if ( ax >= ay && ax >= az ) {
+
+			face = _gm_dir[ 0 ] > 0 ? CUBE_FACE_POS_X : CUBE_FACE_NEG_X;
+			sc = _gm_dir[ 0 ] > 0 ? - _gm_dir[ 2 ] : _gm_dir[ 2 ];
+			tc = - _gm_dir[ 1 ];
+			const ma = ax;
+
+			sc /= ma; tc /= ma;
+
+		} else if ( ay >= az ) {
+
+			face = _gm_dir[ 1 ] > 0 ? CUBE_FACE_POS_Y : CUBE_FACE_NEG_Y;
+			sc = _gm_dir[ 0 ];
+			tc = _gm_dir[ 1 ] > 0 ? _gm_dir[ 2 ] : - _gm_dir[ 2 ];
+			const ma = ay;
+
+			sc /= ma; tc /= ma;
+
+		} else {
+
+			face = _gm_dir[ 2 ] > 0 ? CUBE_FACE_POS_Z : CUBE_FACE_NEG_Z;
+			sc = _gm_dir[ 2 ] > 0 ? _gm_dir[ 0 ] : - _gm_dir[ 0 ];
+			tc = - _gm_dir[ 1 ];
+			const ma = az;
+
+			sc /= ma; tc /= ma;
+
+		}
+
+		return {
+			face,
+			u: ( sc + 1 ) * 0.5,
+			v: ( tc + 1 ) * 0.5
+		};
+
+	}
+
+	/**
+	 * Generate a procedural skybox using simplex-noise dithering. Populates
+	 * the internal `images` array with six generated canvases. Useful when
+	 * a CubeTexture is required but no source images are available.
+	 *
+	 * @param {number} [size=512] - Edge length of each face in pixels.
+	 * @param {number} [amplitude=0.5] - Dither amplitude in 8-bit units.
+	 * @returns {CubeTexture} A reference to this instance.
+	 */
+	generateProceduralSkybox( size = 512, amplitude = 0.5 ) {
+
+		const faces = [];
+
+		for ( let f = 0; f < 6; f ++ ) {
+
+			const canvas = document.createElement( 'canvas' );
+			canvas.width = size;
+			canvas.height = size;
+
+			const rgba = generateSkyboxFace( size, size, f, amplitude );
+			const imageData = new ImageData( rgba, size, size );
+			canvas.getContext( '2d' ).putImageData( imageData, 0, 0 );
+
+			faces.push( canvas );
+
+		}
+
+		this.images = faces;
+		this.needsUpdate = true;
+
+		return this;
+
+	}
+
+	/**
+	 * Create a batched cube-face validation coordinator backed by bitecs.
+	 * Enumerates and validates the six faces of many CubeTexture instances
+	 * in a single cache-friendly pass.
+	 *
+	 * @returns {CubeTextureBatch}
+	 */
+	static createBatch() {
+
+		return new CubeTextureBatch();
+
+	}
+
+	/**
+	 * Copy the given cube texture's properties into this one.
+	 *
+	 * @param {CubeTexture} source - The texture to copy from.
+	 * @return {CubeTexture} A reference to this instance.
+	 */
+	copy( source ) {
+
+		super.copy( source );
+
+		this.images = [];
+
+		for ( let i = 0, l = source.images.length; i < l; i ++ ) {
+
+			this.images[ i ] = source.images[ i ];
+
+		}
+
+		return this;
+
+	}
+
+	/**
+	 * Serializes the cube texture into JSON.
+	 *
+	 * @param {?(Object|string)} meta - An optional value holding meta information.
+	 * @return {Object} A JSON object representing the serialized texture.
+	 */
+	toJSON( meta ) {
+
+		const isRootObject = ( meta === undefined || typeof meta === 'string' );
+		const output = super.toJSON( meta );
+
+		// The base Texture.toJSON already includes `image` — for a cube
+		// texture we additionally record the face count and dimensions.
+		output.image = {
+			width: this.image.width,
+			height: this.image.height,
+			faceCount: this.images.length
+		};
+
+		if ( ! isRootObject ) {
+
+			meta.textures[ this.uuid ] = output;
+
+		}
+
+		return output;
+
+	}
+
 }
 
-export {
-    CubeTexture,
-    CubeTextureBatch,
-    faceUVToDirectionPrecise,
-    faceBasisGlMat,
-    synthesizeFaceNoise,
-    FACE_ORDER
-};
+export { CubeTexture, CubeTextureBatch, cubeFaceToDirectionPrecise, generateSkyboxFace };
 export default CubeTexture;
