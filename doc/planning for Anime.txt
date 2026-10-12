@@ -1,0 +1,583 @@
+## BATCH 1: CORE FOUNDATION FOLDERS
+
+### 1. ANIMATION FOLDER
+
+**AnimationClip System:**
+- Create AnimationClip class for storing keyframe animation data
+- Implement parse() method for loading animation from JSON
+- Implement createClipsFromObject() for extracting animations from 3D models
+- Support for morph target animations (water surface deformation, vegetation movement)
+- Time scaling and looping controls (LoopOnce, LoopRepeat, LoopPingPong)
+
+**AnimationMixer System:**
+- Create AnimationMixer for managing multiple animations on a single object
+- Implement clip actions with fade in/out transitions
+- Add time warping for variable speed playback (wind speed variations)
+- Support for additive blending of animations
+- Implement update(deltaTime) for frame-by-frame animation progression
+
+**AnimationAction System:**
+- Create AnimationAction for controlling individual animation clips
+- Implement play(), stop(), fadeIn(), fadeOut() methods
+- Add time scale control for animation speed
+- Support for weight blending between actions
+- Implement event dispatching for animation milestones
+
+**AnimationObjectGroup:**
+- Group objects for batch animation updates
+- Optimize animation processing for multiple similar objects (rocks, vegetation)
+- Implement property binding for efficient keyframe interpolation
+
+**KeyframeTrack System:**
+- Create boolean, color, number, quaternion, string, and vector keyframe tracks
+- Implement interpolation methods (linear, cubic, step)
+- Support for value array extraction and setting
+- Add time optimization for sparse keyframes
+
+**Interpolant System:**
+- Create CubicInterpolant for smooth curve interpolation
+- Implement LinearInterpolant for basic interpolation
+- Add DiscreteInterpolant for step changes
+- Create QuaternionLinearInterpolant for rotation interpolation
+
+**Features for Scene Reproduction:**
+- Water wave animation system using morph targets or vertex shaders
+- Cloud movement animation across sky
+- Vegetation swaying animation (grass, trees on cliffs)
+- Day/night cycle animation for lighting changes
+- Camera fly-through animation paths
+
+---
+
+### 2. AUDIO FOLDER
+
+**AudioListener:**
+- Create AudioListener attached to camera for 3D spatial audio
+- Implement position and orientation tracking
+- Add Doppler effect simulation
+- Support for master volume control
+
+**Audio System:**
+- Create Audio class for non-positional audio (background music, ambient sounds)
+- Implement AudioContext management
+- Add gain node for volume control
+- Support for panning and filters
+- Implement play(), pause(), stop(), setLoop() methods
+
+**PositionalAudio:**
+- Create PositionalAudio extending Audio for 3D sound
+- Implement distance-based volume attenuation
+- Add directional audio based on listener orientation
+- Support for reference distance and max distance parameters
+- Implement rolloff factor for realistic sound decay
+
+**AudioAnalyser:**
+- Create AudioAnalyser for frequency and time domain data
+- Implement getFrequencyData() for visualizations
+- Add getAverageFrequency() for audio-reactive effects
+- Support for FFT size configuration
+
+**Features for Scene Reproduction:**
+- Ocean wave ambient sounds with positional audio
+- Wind sounds varying with camera height (cliff scenes)
+- Bird sounds in vegetation areas
+- Water flow sounds for river scene
+- Environmental reverb based on scene geometry (canyon echo)
+
+---
+
+### 3. CAMERAS FOLDER
+
+**Camera Base Class:**
+- Extend Object3D with camera-specific properties
+- Implement projection matrix calculation
+- Add near and far plane management
+- Support for viewport configuration
+- Implement view offset for stereo rendering
+
+**PerspectiveCamera:**
+- Create PerspectiveCamera with field of view control
+- Implement aspect ratio handling for responsive rendering
+- Add focal length and film gauge properties
+- Support for depth of field calculations
+- Implement updateProjectionMatrix() method
+
+**OrthographicCamera:**
+- Create OrthographicCamera for parallel projection
+- Implement left, right, top, bottom frustum planes
+- Add zoom functionality
+- Support for isometric views of terrain
+
+**StereoCamera:**
+- Create StereoCamera for VR/3D effects
+- Implement eye separation control
+- Add focus distance configuration
+- Support for parallel and asymmetric frustums
+
+**Camera Controls (Integration Points):**
+- Implement matrixWorld updates for camera movement
+- Add worldToScreen coordinate conversion
+- Support for camera shake effects
+- Implement smooth camera transitions
+
+**Features for Scene Reproduction:**
+- Wide-angle perspective for landscape vistas (45-75 degree FOV)
+- Low camera angles for dramatic cliff views
+- High altitude camera positions for ocean overview
+- Smooth camera panning for scene exploration
+- Depth of field for focusing on specific elements (house details)
+- Multiple camera presets for different scenes
+
+---
+
+### 4. CORE FOLDER
+
+**Object3D Base Class:**
+- Create Object3D as the foundation for all scene objects
+- Implement position, rotation, scale properties with Vector3, Euler, Vector3
+- Add parent-child hierarchy management (add, remove, attach, detach)
+- Implement local and world matrix calculations
+- Support for matrixAutoUpdate optimization
+- Add rotation order configuration (XYZ, YXZ, ZXY, etc.)
+- Implement visible property for rendering control
+- Add frustumCulled property for visibility optimization
+- Support for custom layers with Layers class
+- Implement raycasting with raycast() method override
+- Add clone() and copy() methods for object duplication
+- Implement traverse() for recursive tree walking
+- Support for userData extensibility
+
+**BufferGeometry System:**
+- Create BufferGeometry for efficient vertex data storage
+- Implement position, normal, uv, uv2, color attributes
+- Add index buffer for indexed rendering
+- Support for morph targets (morphAttributes, morphTargetsRelative)
+- Implement bounding sphere and bounding box calculations
+- Add geometry groups for multi-material support
+- Support for instancing with instanceCount
+- Implement computeVertexNormals() for smooth shading
+- Add computeTangents() for normal mapping
+- Support for geometry morphing and blending
+- Implement clear() and dispose() for memory management
+
+**Material Base Class:**
+- Create Material as base for all material types
+- Implement color, opacity, transparent properties
+- Add side rendering control (FrontSide, BackSide, DoubleSide)
+- Support for blending modes (NoBlending, NormalBlending, AdditiveBlending, etc.)
+- Implement depth testing and writing controls
+- Add polygon offset for z-fighting prevention
+- Support for material clipping planes
+- Implement onBeforeCompile callback for shader modification
+- Add custom shader uniforms and code injection
+- Support for material variants with clone()
+
+**InstancedBufferGeometry:**
+- Extend BufferGeometry for instanced rendering
+- Implement instanceColor attribute for per-instance coloring
+- Add support for large object counts (thousands of rocks, vegetation)
+- Optimize draw calls for repeated geometry
+
+**Raycaster System:**
+- Create Raycaster for mouse/touch interaction
+- Implement setFromCamera() for 3D ray creation
+- Add intersectObject() and intersectObjects() methods
+- Support for recursive intersection testing
+- Implement distance and point calculation
+- Add face and uv coordinate extraction
+- Support for custom raycasting logic
+
+**RenderTarget System:**
+- Create WebGLRenderTarget for off-screen rendering
+- Implement multiple render targets (MRT) support
+- Add depth and stencil buffer configuration
+- Support for render target resizing
+- Implement texture sampling from render targets
+- Add blit functionality for render target copying
+
+**Uniforms Group:**
+- Create Uniform and UniformGroup for shader parameters
+- Implement automatic uniform updates
+- Support for texture uniforms
+- Add buffer uniforms for compute shaders
+- Implement uniform cloning and copying
+
+**Features for Scene Reproduction:**
+- Scene graph hierarchy for organizing terrain, water, vegetation, buildings
+- Object pooling for efficient rock and vegetation instantiation
+- LOD (Level of Detail) system using Object3D hierarchy
+- Frustum culling optimization for large landscapes
+- GPU instancing for thousands of rocks and plants
+- Render targets for water reflection/refraction
+- Raycasting for terrain interaction and object placement
+- Material variants for different rock types, water depths, vegetation types
+- Morph targets for animated water surfaces
+- Custom shader uniforms for wind speed, time of day, water parameters
+
+
+
+## BATCH 2: UTILITIES, SHAPES, DEBUGGING, AND ILLUMINATION
+
+### 5. EXTRAS FOLDER
+
+**Curves and Paths System:**
+- Create Curve base class with getPoint() and getTangent() methods
+- Implement LineCurve, LineCurve3, QuadraticBezierCurve, CubicBezierCurve
+- Add CatmullRomCurve3 for smooth camera fly-through paths and river flow paths
+- Implement SplineCurve for 2D contouring
+- Support for curve subdivision and point sampling density control
+
+**Shapes and Geometry Generation:**
+- Create Shape class extending Path for 2D shape definition
+- Implement ShapeUtils for triangulation (earcut algorithm)
+- Add ShapePath for parsing SVG data into renderable shapes
+- Support for hole punching in shapes (useful for custom building footprints or terrain cutouts)
+
+**Text and Font Handling:**
+- Create Font class for loading JSON font data
+- Implement TextGeometry generation from string and font parameters
+- Add character spacing, line height, and curve segments control
+- Support for dynamic text generation for UI or in-world signage
+
+**Data and Image Utilities:**
+- Create DataUtils for typed array manipulation and compression
+- Implement ImageUtils for texture data extraction and manipulation
+- Add getDataURL() for capturing scene snapshots
+- Support for sRGB encoding and decoding utilities
+
+**PMREMGenerator (Prefiltered Mipmap Radiance Environment Map):**
+- Create PMREMGenerator for generating realistic environment maps
+- Implement prefiltered mipmaps for physically based roughness reflections
+- Support for cube render target conversion to equirectangular
+- Optimize for real-time environment mapping on water and wet rocks
+
+**Features for Scene Reproduction:**
+- CatmullRomCurve3 for defining the river canyon path and camera trajectories
+- Shape and ExtrudeGeometry integration for custom house rooflines and architectural details
+- PMREMGenerator for realistic sky reflections on the ocean surface and wet canyon rocks
+- DataUtils for procedural terrain heightmap generation and manipulation
+- ImageUtils for extracting color palettes from reference images to match scene aesthetics
+
+---
+
+### 6. GEOMETRIES FOLDER
+
+**Primitive Geometries:**
+- Create BoxGeometry for buildings, house structures, and bounding volumes
+- Implement SphereGeometry for rounded rocks, boulders, and sun/moon representations
+- Add PlaneGeometry and PlaneBufferGeometry for ground planes, water surfaces, and billboards
+- Implement CylinderGeometry for tree trunks, pillars, and rock formations
+- Add ConeGeometry for stylized trees, mountain peaks, and decorative elements
+- Implement CapsuleGeometry for organic character or smooth rock shapes
+
+**Advanced and Procedural Geometries:**
+- Create LatheGeometry for vases, columns, and symmetrical rock formations
+- Implement ExtrudeGeometry for 3D shapes from 2D paths (custom terrain extrusions, building walls)
+- Add RingGeometry for water ripples, halos, and stylized effects
+- Implement TorusGeometry and TorusKnotGeometry for complex decorative or abstract rock formations
+
+**Polyhedral Geometries:**
+- Create PolyhedronGeometry as a base for custom convex shapes
+- Implement TetrahedronGeometry, OctahedronGeometry, IcosahedronGeometry, and DodecahedronGeometry
+- Use these for low-poly stylized rocks, crystals, and desert landscape elements
+- Support for detail level parameters to subdivide faces for smoother or more jagged appearances
+
+**Complex Path Geometries:**
+- Create TubeGeometry for pipes, vines, roots, and winding river banks
+- Implement custom path following with radius and radial segment controls
+- Support for closed loops and tapering effects
+
+**Utility Geometries:**
+- Create WireframeGeometry for debugging mesh topology
+- Implement EdgesGeometry for highlighting mesh boundaries and stylized outlines (cel-shading effects)
+
+**Features for Scene Reproduction:**
+- High-segment PlaneGeometry displaced by heightmaps for realistic terrain and canyon walls
+- IcosahedronGeometry with low detail for stylized desert rocks, high detail for smooth boulders
+- ExtrudeGeometry for generating the house structure from 2D floor plans
+- TubeGeometry for generating organic vine and root systems on the cliff faces
+- EdgesGeometry combined with custom materials for stylized, outlined vegetation or architectural features
+- Instanced versions of all geometries (via InstancedBufferGeometry) for rendering thousands of rocks and plants efficiently
+
+---
+
+### 7. HELPERS FOLDER
+
+**Spatial and Axis Helpers:**
+- Create AxesHelper for visualizing X (red), Y (green), Z (blue) axes at the world origin or object local space
+- Implement GridHelper and PolarGridHelper for ground plane reference and radial terrain layout
+- Add BoxHelper and Box3Helper for visualizing bounding boxes of terrain chunks, buildings, and culling volumes
+
+**Lighting Helpers:**
+- Create DirectionalLightHelper to visualize sun position, target, and frustum
+- Implement HemisphereLightHelper for visualizing sky/ground color gradients
+- Add PointLightHelper and SpotLightHelper with sphere and cone representations
+- Support for dynamic updating as lights move (e.g., sun setting)
+
+**Camera and Object Helpers:**
+- Create CameraHelper to visualize camera frustum, near/far planes, and view direction
+- Implement VertexNormalsHelper to visualize surface normals for debugging lighting and shading issues on rocks and terrain
+- Add PlaneHelper to visualize clipping planes or water surface levels
+
+**Skeleton and Animation Helpers:**
+- Create SkeletonHelper for visualizing bone hierarchies (if using rigged vegetation or characters)
+- Implement PositionalAudioHelper for visualizing sound emission cones and distance falloff
+
+**Features for Scene Reproduction:**
+- VertexNormalsHelper to ensure terrain and rock normals are correctly computed for accurate sunlight shading
+- CameraHelper to fine-tune the exact framing of the cliff, ocean, and house scenes
+- DirectionalLightHelper to precisely position the sun for dramatic canyon shadows and golden hour lighting
+- BoxHelper to debug frustum culling boundaries, ensuring distant mountains and ocean horizons are not prematurely culled
+- GridHelper as a temporary base during terrain mesh generation and alignment
+
+---
+
+### 8. LIGHTS FOLDER
+
+**Base Light System:**
+- Create Light base class extending Object3D with color and intensity properties
+- Implement shadow casting and receiving capabilities (castShadow, shadow map configuration)
+- Add support for light layers and selective illumination
+- Implement light decay and distance attenuation models
+
+**Ambient and Environmental Lighting:**
+- Create AmbientLight for base, non-directional illumination (simulating scattered sky light)
+- Implement HemisphereLight with distinct sky color, ground color, and intensity
+- Support for spherical harmonics (SH) lighting for fast, realistic ambient occlusion and indirect lighting on terrain
+
+**Directional and Sun Lighting:**
+- Create DirectionalLight for simulating the sun or moon
+- Implement parallel light rays with no distance attenuation
+- Add shadow camera frustum controls (left, right, top, bottom, near, far)
+- Support for shadow map resolution and bias tuning to prevent shadow acne on terrain
+- Implement cascaded shadow maps (via renderer integration) for high-quality shadows at both near (house) and far (mountain) distances
+
+**Local and Point Lighting:**
+- Create PointLight for omnidirectional light sources (campfires, glowing plants, interior house lights)
+- Implement distance and decay parameters for realistic light falloff
+- Add PointLightShadow for localized shadow casting
+
+**Spotlight and Area Lighting:**
+- Create SpotLight for focused beams (flashlights, stage lighting, specific architectural highlighting)
+- Implement penumbra for soft shadow edges
+- Add target object tracking for dynamic spotlight direction
+- Create RectAreaLight for realistic, soft light emission (useful for window light spilling from the house, or soft sky light patches)
+
+**Features for Scene Reproduction:**
+- HemisphereLight with blue sky and brown/green ground colors for realistic desert and canyon ambient lighting
+- DirectionalLight with high-resolution shadow maps configured for the sun, casting long, dramatic shadows across the river canyon
+- PointLights with warm colors placed inside the house windows to create a cozy, inviting glow against the cool outdoor environment
+- AmbientLight at low intensity to ensure shadow areas are not completely black, retaining detail in rock crevices
+- Dynamic light color and intensity animation to simulate day-to-night transitions or weather changes (e.g., overcast ocean scene)
+
+
+## BATCH 4: RENDERING ENGINE, SCENE MANAGEMENT, AND TEXTURE PIPELINE
+
+### 13. RENDERERS FOLDER
+
+**WebGLRenderer Core System:**
+- Create WebGLRenderer as the primary rendering engine, managing the WebGL context, canvas, and drawing buffers.
+- Implement automatic context loss and restoration handling to ensure application stability.
+- Add support for physical lighting models, ACES Filmic Tone Mapping, and sRGB output encoding for cinematic color accuracy.
+- Implement pixel ratio management to balance visual fidelity and performance on high-DPI displays.
+- Add multi-render target (MRT) support for advanced deferred shading and post-processing effects.
+
+**State and Property Management (CPU Optimization):**
+- Create WebGLState, WebGLProperties, and WebGLTextures to cache WebGL API states.
+- Implement strict state comparison to prevent redundant WebGL calls (e.g., binding the same texture or shader twice), which is the single most critical factor for maximizing CPU-side FPS.
+- Add WebGLUniforms for efficient uniform buffer object (UBO) management and automatic uniform dirty-checking.
+
+**Shadow Mapping System:**
+- Create WebGLShadowMap for rendering shadow maps from the perspective of light sources.
+- Implement PCFSoftShadowMap and VSM (Variance Shadow Maps) for smooth, realistic shadow edges on terrain and buildings.
+- Add support for Cascaded Shadow Maps (CSM) to maintain high-resolution shadows for near objects (house, foreground rocks) while covering vast distances (desert, canyon) without performance drops.
+
+**Render List and Sorting:**
+- Create RenderList and RenderItem to collect all visible objects in the scene.
+- Implement state-based sorting to group draw calls by material and geometry, minimizing GPU state changes.
+- Add frustum culling integration to completely skip rendering objects outside the camera's view.
+
+**Features for Scene Reproduction:**
+- Configure WebGLRenderer with WebGL2 context for advanced features like 3D textures and instanced rendering.
+- Use RenderList sorting to batch all instanced rocks and vegetation into minimal draw calls.
+- Implement Cascaded Shadow Maps to render sharp, realistic sun shadows across the massive desert and river canyon scenes without sacrificing FPS.
+- Use WebGLRenderTarget for real-time planar reflections on the ocean and river surfaces.
+
+---
+
+### 14. SCENES FOLDER
+
+**Scene Graph Root:**
+- Create Scene class extending Object3D to serve as the root container for all 3D objects, cameras, and lights.
+- Implement background properties supporting solid colors, canvas textures, and CubeTextures for skyboxes.
+- Add environment map assignment for global PBR reflections and ambient lighting.
+- Implement overrideMaterial to force a specific material (like a depth or normal pass) across the entire scene for post-processing.
+
+**Fog and Atmospheric Effects:**
+- Create Fog for linear depth-based atmospheric scattering.
+- Implement FogExp2 for exponential fog, providing realistic distance fading for the ocean horizon and distant desert mountains.
+- Add color and density controls to match the specific atmospheric perspective of each reference image.
+
+**Features for Scene Reproduction:**
+- Use CubeTexture backgrounds to render the dynamic, cloudy skies seen in the cliff and house scenes.
+- Apply FogExp2 to blend the distant ocean and desert horizons seamlessly into the sky color, enhancing depth perception.
+- Manage the scene graph hierarchy to separate static geometry (terrain, house) from dynamic geometry (water, animated vegetation) for optimized update loops.
+
+---
+
+### 15. TEXTURES FOLDER
+
+**Base Texture System:**
+- Create Texture class managing GPU texture objects, mapping coordinates, and sampling parameters.
+- Implement wrapping modes (RepeatWrapping, ClampToEdgeWrapping) for seamless terrain and water tiling.
+- Add filtering modes (NearestFilter, LinearFilter, LinearMipmapLinearFilter) for optimal visual quality and performance.
+- Support for maximum anisotropy (16x) to keep ground textures (desert sand, canyon floor) sharp at steep viewing angles.
+
+**Specialized Texture Types:**
+- Create CubeTexture for environment mapping, skyboxes, and reflection probes.
+- Implement DataTexture and Data3DTexture for programmatic generation of heightmaps, 3D noise fields (for volumetric clouds and fog), and custom shader data.
+- Add CanvasTexture for dynamic, runtime-generated textures like water normal maps or UI elements.
+- Create CompressedTexture and CompressedArrayTexture to load GPU-compressed formats (KTX2, Basis Universal), drastically reducing VRAM usage and improving GPU cache hit rates.
+- Implement FramebufferTexture and RenderTargetTexture (r185 features) for advanced feedback loops and dynamic reflection/refraction maps.
+
+**Performance and Memory Features for Scene Reproduction:**
+- Enforce the use of CompressedTexture (KTX2) for all albedo, normal, and roughness maps to minimize memory bandwidth and maximize GPU texture sampling FPS.
+- Generate mipmaps for all terrain and rock textures to prevent aliasing and shimmering at a distance.
+- Use Data3DTexture to create volumetric cloud layers and atmospheric scattering effects for the sky.
+- Implement dynamic CanvasTexture or RenderTargetTexture for real-time water normal map generation to simulate ocean waves and river ripples without loading heavy video files.
+
+
+
+
+## BATCH 5: ACADEMIC AND MATHEMATICAL FORMULATION OF THE COLOR-ONLY ANIME RENDER PIPELINE
+
+### 1. ANIMATION FOLDER
+Temporal color evolution is governed by continuous time-dependent functions. To achieve dynamic mood shifts and procedural cloud movement without textures, we utilize temporal noise functions. The color at time $t$ for a procedural sky is defined by $C(t) = \int_{0}^{t} \nabla noise(\vec{p}, \tau) d\tau$, where $\vec{p}$ is the spatial coordinate. For anime-style cel-shading animation, color banding transitions are modeled using discrete step functions over time, ensuring that color shifts occur in distinct, stylized phases rather than smooth gradients, maintaining the highest frame rates by pre-calculating keyframe color matrices.
+
+### 2. AUDIO FOLDER
+Audio-reactive color modulation maps spectral amplitude to chromatic intensity. The frequency domain data $F(\omega)$ is integrated to modulate the emissive color vector $\vec{C}_{emissive} = \vec{C}_{base} + k \cdot \sum F(\omega) \cdot \vec{V}_{palette}$, where $k$ is a scaling factor and $\vec{V}_{palette}$ represents the preset color vectors. This allows environmental colors, such as water ripples or glowing flora, to pulse in exact synchronization with acoustic energy, computed via fast Fourier transforms optimized for minimal CPU overhead.
+
+### 3. CAMERAS FOLDER
+View-dependent color manipulation relies on the view vector $\vec{V}$ and normal vector $\vec{N}$. Atmospheric perspective and mood are enforced through depth-based color blending: $C_{final} = C_{object} \cdot e^{-\beta d} + C_{fog} \cdot (1 - e^{-\beta d})$, where $d$ is the depth and $\beta$ is the scattering coefficient. For anime-style rim lighting, the Fresnel effect is approximated using a power function $F(\theta) = F_0 + (1 - F_0)(1 - \cos\theta)^p$, injecting stylized rim colors based on the viewing angle to separate foreground reliefs from the background.
+
+### 4. CORE FOLDER
+The foundational color data structure extends the scene graph to carry procedural color parameters. Barycentric coordinates $(\lambda_1, \lambda_2, \lambda_3)$ are utilized for precise vertex color interpolation across polygonal reliefs. To maintain high performance, color composition is managed through hierarchical color inheritance, where child objects inherit and modulate the parent's color matrix via affine transformations, allowing complex color variety across large terrains without redundant calculations.
+
+### 5. EXTRAS FOLDER
+Procedural shape generation defines color zones. Gradient maps are mathematically constructed using cubic Bézier curves $B(t) = (1-t)^3 P_0 + 3(1-t)^2 t P_1 + 3(1-t)t^2 P_2 + t^3 P_3$, where the control points $P_i$ represent distinct color vectors in HSV space. This allows for the manual or procedural creation of smooth, stylized color transitions for sky gradients and water depth bands, ensuring perfect color composition without texture sampling overhead.
+
+### 6. GEOMETRIES FOLDER
+Vertex density dictates the resolution of procedural color reliefs. Signed Distance Fields (SDFs) are evaluated at each vertex to generate procedural color banding on rocks and cliffs. The SDF function $f(\vec{p})$ determines the distance to the nearest surface, and the color is assigned via a mapping function $C = f_{map}(f(\vec{p}))$. This creates sharp, anime-style color boundaries on complex geometries, simulating detailed reliefs purely through vertex color manipulation and geometric displacement.
+
+### 7. HELPERS FOLDER
+Color space visualization and histogram analysis ensure mood balancing. Mathematical tools compute the luminance distribution $L = 0.2126 R + 0.7152 G + 0.0722 B$ across the scene to verify that the color composition adheres to the desired anime aesthetic. These tools also visualize the normal vector distribution to ensure that procedural shading functions receive accurate geometric data for consistent color application.
+
+### 8. LIGHTS FOLDER
+Light transport is simplified for anime aesthetics using quantized diffuse and specular terms. The standard diffuse reflection $C_{diffuse} = C_{light} \cdot C_{base} \cdot \max(0, \vec{N} \cdot \vec{L})$ is passed through a smoothstep quantization function $Q(x) = 3x^2 - 2x^3$ mapped to discrete thresholds. This creates the characteristic hard shadow boundaries of anime. Specular highlights are modeled as tight Gaussian distributions $C_{spec} = C_{light} \cdot e^{-\frac{(\vec{R} \cdot \vec{V})^2}{2\sigma^2}}$, providing sharp, stylized reflections on water and wet rocks.
+
+### 9. LOADERS FOLDER
+This folder manages the ingestion of color palettes, gradient maps, and procedural seed data. Color presets are loaded as multidimensional arrays in perceptually uniform color spaces (like CIELAB) to ensure that procedural color blending and gradients maintain consistent luminance and saturation, preventing muddy or desaturated results during real-time color composition.
+
+### 10. MATERIALS FOLDER
+The core of the color-only pipeline. Physically Based Rendering (PBR) is approximated for anime styles. Cheap Subsurface Scattering (SSS) is achieved using a modified diffuse wrap function: $C_{sss} = C_{base} \cdot \max(0, \frac{\vec{N} \cdot \vec{L} + w}{1 + w})$, where $w$ is the wrap factor, combined with a back-lighting color shift $\Delta C$ to simulate light bleeding through vegetation and thin rock edges. Color variety is injected via procedural noise modulating the base color vector, ensuring no two rocks or leaves share the exact same hue.
+
+### 11. MATH FOLDER
+The engine of procedural generation. Vector algebra and noise functions (Simplex, Worley) generate the foundational data. Fractal Brownian Motion (fBm) is computed as $fBm(\vec{p}) = \sum_{i=0}^{n} amplitude_i \cdot noise(frequency_i \cdot \vec{p})$ to create complex, organic color patterns for water surfaces and cloud reliefs. Color space transformations (RGB to HSV) are performed using optimized matrix multiplications to allow for real-time hue, saturation, and value manipulation directly in the shader pipeline.
+
+### 12. OBJECTS FOLDER
+Manages procedural color instances. Instanced color matrices allow thousands of rocks and vegetation elements to share the same geometric data while possessing unique color vectors. The color variation is applied via a per-instance random vector $\vec{R}_{instance}$, modulating the base color: $C_{instance} = C_{base} \otimes \vec{R}_{instance}$, where $\otimes$ denotes component-wise multiplication. This ensures vast color variety across the landscape with a single draw call.
+
+### 13. RENDERERS FOLDER
+The pixel pipeline enforces the final color composition. Order-independent transparency (OIT) is utilized for blending water and cloud layers without depth sorting artifacts. Post-processing color grading applies a 3D Look-Up Table (LUT) to map the rendered linear colors to the final stylized anime palette. Tone mapping is implemented via a custom curve function to preserve highlight details in the sky and water reflections, ensuring the mood remains vibrant and high-contrast.
+
+### 14. SCENES FOLDER
+Global color context is managed here. Fog is not merely a depth fade but an exponential color blending function that shifts the hue of distant objects towards the sky color, enhancing atmospheric perspective. The environment map is replaced by a procedural spherical harmonic (SH) representation, providing low-frequency ambient color lighting that dynamically updates based on the time of day, ensuring the entire scene's mood shifts cohesively.
+
+### 15. TEXTURES FOLDER
+Since textures are optional, this folder focuses on procedural texture generation via mathematical functions. 3D noise fields and Voronoi diagrams generate the underlying color patterns for rocks and sand. Fractal noise creates the procedural water normal maps, driving the refraction and reflection color shifts. By generating these patterns algorithmically on the GPU, we achieve infinite color variety and perfect tiling without the memory bandwidth cost of traditional texture sampling.
+
+## BATCH 6: PARAMETRIC PRESETS FOR DYNAMIC PROCEDURAL GENERATION AND CLIMATIC SIMULATION
+
+The following presets are defined as high-dimensional parameter vectors. They serve as the foundational configuration for the real-time, color-only anime render pipeline. Each preset mathematically dictates the procedural generation of geometry, the behavior of light, the composition of color gradients, and the application of stylized shading features, including cheap Subsurface Scattering (SSS) and atmospheric scattering.
+
+### PRESET 1: COASTAL OCEANIC (Clear Waters and Rocks)
+**Biome and Mood:** A vibrant, sun-drenched coastal environment. The mood is refreshing, serene, and highly contrasted.
+**Color Matrix and Composition:** The water base color transitions from a deep cyan (HSV: 190°, 80%, 90%) in the shallows to a profound navy blue (HSV: 210°, 90%, 40%) in the depths using a linear depth-based gradient. Rocks utilize a warm, desaturated beige (HSV: 35°, 40%, 85%) with a darker, cool grey (HSV: 220°, 20%, 30%) for the shadow bands.
+**Lighting and Shading Behavior:** The sun is positioned at a high zenith angle. Diffuse lighting is quantized into two distinct bands (light and shadow) with a sharp smoothstep transition to achieve the anime cel-shaded look. Water surfaces use a high Fresnel exponent to create sharp, white specular highlights.
+**Sky and Clouds:** The sky is a simple vertical linear gradient from pale cyan at the horizon to deep azure at the zenith. Clouds are generated using sparse 3D Worley noise, rendered as flat, white, hard-edged 2D billboards with no internal gradients.
+**Reliefs and Procedural Generation:** Ocean waves are generated via Gerstner wave functions, displacing vertices and dynamically altering the vertex normals. Rocks are instantiated using low-poly IcosahedronGeometry with randomized vertex displacement and a flat-shading color matrix to simulate jagged, untextured stone.
+**SSS and Blends:** Water foam is simulated by blending pure white into the water color based on the vertex displacement velocity and shoreline proximity. Rocks do not use SSS, relying instead on high ambient occlusion color blending in crevices.
+
+### PRESET 2: ARID DESERT (Dunes and Mountains)
+**Biome and Mood:** A vast, scorching, and desolate landscape. The mood is oppressive, expansive, and highly saturated in the warm spectrum.
+**Color Matrix and Composition:** The sand transitions from a bright, warm ochre (HSV: 30°, 80%, 95%) at the peaks of dunes to a deep, burnt sienna (HSV: 15°, 70%, 40%) in the troughs. Mountains use a reddish-brown (HSV: 10°, 60%, 50%) with a purple-grey (HSV: 270°, 30%, 25%) for the shadow faces to simulate atmospheric scattering in the distance.
+**Lighting and Shading Behavior:** The sun is positioned at a low angle, creating elongated, dramatic shadows. The shadow quantization threshold is lowered to increase the shadow area. A procedural heat haze effect is applied by distorting the screen-space UV coordinates using a high-frequency, low-amplitude sine wave driven by time and screen height.
+**Sky and Clouds:** The sky is a stark, cloudless gradient from pale white-blue at the horizon to a piercing, saturated blue at the zenith. The horizon line features a subtle yellow-orange gradient to simulate dust scattering.
+**Reliefs and Procedural Generation:** Sand dunes are generated using layered Fractal Brownian Motion (fBm) noise to displace a high-segment PlaneGeometry. The normal vectors are smoothed mathematically to create soft, rolling shadows. Mountains are generated using fault-formation algorithms, creating sharp, jagged peaks with steep color banding.
+**SSS and Blends:** No SSS is applied. Instead, a "rim light" color shift is added to the sun-facing edges of the dunes, blending a bright, almost white-yellow into the base sand color to simulate intense surface reflection.
+
+### PRESET 3: RIVER CANYON (Deep Gorge and Flowing Water)
+**Biome and Mood:** A majestic, deep, and enclosed natural structure. The mood is awe-inspiring, with a strong sense of depth and geological history.
+**Color Matrix and Composition:** The river is a rich, reflective emerald green (HSV: 150°, 70%, 60%) transitioning to deep teal (HSV: 180°, 80%, 30%). The canyon walls are composed of stratified layers of terracotta (HSV: 15°, 75%, 65%), rust (HSV: 5°, 80%, 50%), and pale sandstone (HSV: 40°, 50%, 80%).
+**Lighting and Shading Behavior:** Lighting is highly directional but heavily occluded. A procedural Ambient Occlusion (AO) factor is calculated based on the geometric depth and normal curvature, darkening the canyon floor and crevices with a cool, blue-grey color to simulate bounced sky light. The river surface reflects the sky color using a planar reflection matrix, modulated by the water's base color.
+**Sky and Clouds:** The sky is only visible at the zenith, appearing as a narrow band of bright blue. Clouds are minimal, represented by simple, stretched white polygons moving rapidly across the top of the canyon.
+**Reliefs and Procedural Generation:** The canyon is generated by extruding a 2D CatmullRom spline path, applying vertical noise to the walls to create striations and overhangs. The riverbed follows the same spline but with a smoothed, flattened displacement.
+**SSS and Blends:** The water exhibits a cheap transmission effect. The color of the riverbed (sand and submerged rocks) is blended with the water's surface color using an exponential decay function based on water depth, simulating light absorption and scattering.
+
+### PRESET 4: ALPINE CLIFF (Meadows and Verticality)
+**Biome and Mood:** A lush, high-altitude, and precarious environment. The mood is vibrant, alive, and slightly ethereal due to the altitude.
+**Color Matrix and Composition:** The vegetation is a highly saturated, vibrant lime green (HSV: 80°, 70%, 85%) on the sunlit tops, transitioning to a deep forest green (HSV: 120°, 60%, 30%) on the undersides. The cliff face is a cool, slate grey (HSV: 210°, 20%, 60%) with mossy green (HSV: 100°, 40%, 50%) accents. The distant ocean is a hazy, pale blue.
+**Lighting and Shading Behavior:** The lighting is soft and diffused, simulating high-altitude atmospheric scattering. The shadow bands are softer, using a wider smoothstep function. A strong, stylized rim light (pale cyan) is applied to the edges of the cliff and vegetation to separate them from the background sky.
+**Sky and Clouds:** The sky is a bright, clear blue. Clouds are volumetric and fluffy, generated using dense 3D Simplex noise. The cloud color transitions from pure white on the sunlit top to a soft, cool grey on the bottom, using a vertical gradient mapped to the noise density.
+**Reliefs and Procedural Generation:** The cliff is a massive, vertically extruded shape with heavy horizontal noise to create ledges. Vegetation is instanced using simple, flat-shaded cone and sphere geometries, colored with a procedural gradient based on their height and normal direction.
+**SSS and Blends:** Vegetation utilizes a cheap, stylized SSS. The back-facing normals of the leaves and grass are shifted towards a bright, yellow-green color, and the diffuse lighting is wrapped using a high wrap factor, making the foliage appear to glow when backlit by the sun.
+
+### PRESET 5: TEMPERATE RURAL (Pastoral House and Gardens)
+**Biome and Mood:** A cozy, structured, and peaceful human-inhabited space. The mood is warm, inviting, and nostalgic.
+**Color Matrix and Composition:** The house walls are a warm, creamy off-white (HSV: 45°, 20%, 90%) with a subtle, cool grey (HSV: 210°, 10%, 70%) for the shadowed recesses. The roof is a rich, burnt red (HSV: 5°, 70%, 55%). The surrounding trees are a varied mix of mid-greens (HSV: 100° to 140°, 50% to 70%, 50% to 70%).
+**Lighting and Shading Behavior:** The lighting simulates a gentle, late-afternoon sun. Shadows are soft and long. The house geometry features hard, precise shadow boundaries, while the organic vegetation features softer, dappled shadows created by projecting a procedural noise pattern onto the diffuse color.
+**Sky and Clouds:** A classic, picturesque sky with large, distinct cumulus clouds. The clouds are rendered as overlapping, soft-edged spheres with a bright white top and a slightly blue-tinted bottom.
+**Reliefs and Procedural Generation:** The house is constructed from precise, parametric Box and Cylinder geometries, ensuring perfect architectural proportions. The garden and trees are generated using space colonization algorithms or Poisson disk sampling to ensure natural, non-overlapping placement, with colors slightly randomized per instance.
+**SSS and Blends:** The trees and bushes use a moderate SSS wrap. Additionally, the leaves use a procedural "dapple" mask—a high-frequency noise threshold that randomly shifts the base green color to a lighter or darker variant, simulating the complex interplay of light through a canopy without using texture maps.
+
+### PRESET 6: STORMY TEMPEST (Climatic Change - Heavy Rain)
+**Biome and Mood:** A chaotic, dangerous, and high-energy environment. The mood is tense, dramatic, and overwhelming.
+**Color Matrix and Composition:** The entire color palette is desaturated by 40%. The sky and water merge into a dark, slate grey (HSV: 210°, 30%, 30%). Lightning flashes introduce brief, blinding spikes of pure white and pale violet (HSV: 270°, 50%, 90%).
+**Lighting and Shading Behavior:** The primary light source is occluded. Lighting is dominated by a flat, low-intensity ambient term. Dynamic, randomized point lights simulate lightning strikes, casting harsh, instantaneous shadows across the scene.
+**Sky and Clouds:** The sky is completely obscured by a dense, dark, rolling cloud layer generated using high-amplitude, low-frequency 3D noise. The cloud base is a near-black purple, while the tops catch the faint ambient light.
+**Reliefs and Procedural Generation:** Ocean waves are amplified in amplitude and frequency, creating chaotic, intersecting Gerstner waves. The water surface color is darkened, and the specular highlights are broadened and intensified to simulate a wet, turbulent surface.
+**SSS and Blends:** SSS is disabled due to the lack of direct sunlight. Instead, a "wetness" factor is applied to all surfaces, increasing the specular intensity and darkening the base diffuse color by 20% to simulate water absorption.
+
+### PRESET 7: GOLDEN HOUR DUSK (Climatic Change - Sunset)
+**Biome and Mood:** A transitional, melancholic, and highly romantic environment. The mood is peaceful, warm, and fleeting.
+**Color Matrix and Composition:** The sky transitions from a deep, fiery orange (HSV: 20°, 90%, 80%) at the horizon to a rich, royal purple (HSV: 270°, 70%, 40%) at the zenith. All terrestrial objects receive a global color shift, with their shadow bands tinted with a warm, deep magenta.
+**Lighting and Shading Behavior:** The sun is at the horizon, creating extreme, elongated shadows. The light color is a deep, saturated orange. The diffuse lighting is heavily wrapped, illuminating even the shadowed sides of objects with a warm, reddish bounce light.
+**Sky and Clouds:** Clouds are the focal point, catching the under-lighting from the sun. They are rendered in vibrant shades of pink, orange, and gold, with dark purple undersides.
+**Reliefs and Procedural Generation:** Terrain reliefs are smoothed out visually by the low-angle light, emphasizing long, dramatic shadows. Water surfaces become highly reflective, mirroring the intense colors of the sky with a high Fresnel effect.
+**SSS and Blends:** Vegetation and thin objects (like grass or leaves) exhibit extreme SSS. The backlit color is shifted to a brilliant, glowing gold, and the wrap factor is maximized, making the flora appear to emit light from within.
+
+### PRESET 8: POLAR GLACIAL (Climatic Change - Winter/Snow)
+**Biome and Mood:** A frozen, silent, and pristine environment. The mood is cold, isolated, and crisp.
+**Color Matrix and Composition:** The palette is dominated by whites, pale blues, and cool greys. Snow is a bright, slightly blue-tinted white (HSV: 210°, 20%, 95%). Ice is a translucent, deep cyan (HSV: 190°, 60%, 60%). Shadows are tinted with a soft, lavender blue (HSV: 240°, 30%, 70%).
+**Lighting and Shading Behavior:** The lighting is bright but diffuse, simulating light bouncing off a massive snowfield. Shadows are soft and carry a strong blue ambient occlusion color. Specular highlights on snow are sharp and bright, while ice features broad, soft highlights.
+**Sky and Clouds:** The sky is a pale, washed-out blue, almost white at the horizon. Clouds are thin, wispy cirrus clouds, rendered as stretched, semi-transparent white streaks.
+**Reliefs and Procedural Generation:** Terrain is covered in a thick layer of snow, generated by displacing the base geometry with smooth, rolling noise and capping the vertices above a certain height threshold with the snow color. Ice formations are generated using sharp, crystalline geometries with high refractive color blending.
+**SSS and Blends:** Snow exhibits a specific type of SSS. The shadowed areas of the snow are not dark grey, but are blended with a saturated, cool blue to simulate light scattering through the ice crystals.
+
+### PRESET 9: TROPICAL RAINFOREST (Additional Biome)
+**Biome and Mood:** A dense, humid, and overwhelmingly alive environment. The mood is mysterious, vibrant, and claustrophobic.
+**Color Matrix and Composition:** A massive variety of greens, from neon lime (HSV: 70°, 80%, 80%) to deep, almost black emerald (HSV: 140°, 80%, 20%). Tree trunks are dark, warm browns. Flowers and fruits provide sharp, high-saturation accents of red, yellow, and purple.
+**Lighting and Shading Behavior:** Lighting is heavily occluded. The canopy blocks most direct sunlight, creating a complex, dappled lighting environment. God rays (volumetric light shafts) are simulated using radial gradients projecting from gaps in the canopy.
+**Sky and Clouds:** The sky is barely visible, appearing only as small patches of bright, blown-out white and pale blue through the dense canopy.
+**Reliefs and Procedural Generation:** The terrain is uneven and covered in procedural moss and leaf litter. Vegetation is incredibly dense, utilizing multiple layers of instanced geometry (ground cover, bushes, understory trees, canopy trees) with complex, overlapping color masks.
+**SSS and Blends:** High-intensity SSS is applied to all foliage. The dense canopy creates a global illumination effect where the ambient light is heavily tinted green, and the shadows are filled with a scattered, subsurface green glow.
+
+### PRESET 10: MORNING MIST (Climatic Change - Fog)
+**Biome and Mood:** A quiet, obscured, and dreamlike environment. The mood is calm, mysterious, and soft.
+**Color Matrix and Composition:** The entire scene is desaturated and low-contrast. Colors are muted and blended towards a pale, warm grey (HSV: 40°, 10%, 80%). Distant objects lose all saturation, becoming almost pure white.
+**Lighting and Shading Behavior:** Direct sunlight is completely diffused. There are no hard shadows; lighting is entirely ambient and uniform. The contrast between light and shadow bands is minimized, creating a very flat, stylized look.
+**Sky and Clouds:** The sky and the ground fog merge into a single, continuous volume. The horizon is completely obscured.
+**Reliefs and Procedural Generation:** Terrain details are visually smoothed by the fog. Only the foreground reliefs retain their sharp, cel-shaded color bands. As distance increases, the geometric detail is mathematically faded out using an exponential fog function.
+**SSS and Blends:** SSS is minimal. The primary visual effect is the exponential color blending of the fog. The fog color is dynamically calculated based on the camera's height and the time of day, blending seamlessly with the base colors of the objects to create a cohesive, atmospheric depth fade.
+
+
