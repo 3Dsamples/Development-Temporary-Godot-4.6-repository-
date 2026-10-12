@@ -1,0 +1,443 @@
+## BATCH 10: ADVANCED CONTEXT-AWARE SUB-MODULES FOR SHARED CORE SYSTEMS
+
+To achieve a complete, interconnected, and highly optimized real-time anime pipeline, each of the 10 Shared Core Modules is expanded into 10 specialized sub-modules. These sub-modules handle specific advanced techniques, performance optimizations, and context-aware interactions.
+
+### 1. CoreEngineInit.js Sub-Modules (Engine, State, and Performance)
+
+<span style="color:red">ContextStateManager.js</span>
+Imports: `EventDispatcher.js`, `MathUtils.js`
+Functions & Algorithms: `registerGlobalState()`, `broadcastBiomeTransition()`, `interpolateContextParameters()`, `subscribeToWeatherEvents()`.
+
+<span style="color:red">AdaptiveResolutionManager.js</span>
+Imports: `WebGLRenderer.js`, `MathUtils.js`
+Functions & Algorithms: `monitorFrameDeltaTime()`, `calculateDynamicPixelRatio()`, `throttleInternalResolution()`, `restoreHighResolution()`.
+
+<span style="color:red">MemoryPoolAllocator.js</span>
+Imports: `Object3D.js`, `Vector3.js`, `Matrix4.js`
+Functions & Algorithms: `initializeObjectPools()`, `acquirePooledVector()`, `releasePooledMatrix()`, `preventGarbageCollectionSpikes()`.
+
+<span style="color:red">EventBusSystem.js</span>
+Imports: `EventDispatcher.js`
+Functions & Algorithms: `publishGlobalEvent()`, `subscribeModuleListener()`, `filterContextEvents()`, `prioritizeEventQueue()`.
+
+<span style="color:red">PerformanceProfiler.js</span>
+Imports: `WebGLRenderer.js`, `Clock.js`
+Functions & Algorithms: `measureDrawCallCount()`, `trackTriangleThroughput()`, `identifyRenderBottlenecks()`, `logContextMetrics()`.
+
+<span style="color:red">DeviceCapabilityDetector.js</span>
+Imports: `WebGLRenderer.js`, `Capabilities.js`
+Functions & Algorithms: `detectGPUVendor()`, `assessShaderPrecision()`, `assignPerformanceTier()`, `disableAdvancedFeatures()`.
+
+<span style="color:red">TimeScaleController.js</span>
+Imports: `Clock.js`, `MathUtils.js`
+Functions & Algorithms: `setGlobalTimeScale()`, `pauseSimulation()`, `accelerateDayNightCycle()`, `syncAnimationMixers()`.
+
+<span style="color:red">InputInteractionManager.js</span>
+Imports: `Raycaster.js`, `Vector2.js`, `Camera.js`
+Functions & Algorithms: `mapScreenToNDC()`, `handleTouchGestures()`, `updateCameraControlsContext()`, `dispatchInteractionEvents()`.
+
+<span style="color:red">AssetPreloadingManager.js</span>
+Imports: `LoadingManager.js`, `FileLoader.js`
+Functions & Algorithms: `prioritizeCriticalAssets()`, `streamBiomeTextures()`, `calculateLoadProgress()`, `triggerSceneReadyEvent()`.
+
+<span style="color:red">ErrorRecoverySystem.js</span>
+Imports: `WebGLRenderer.js`, `WebGLExtensions.js`
+Functions & Algorithms: `handleContextLost()`, `restoreWebGLState()`, `fallbackShaderCompilation()`, `logRenderingErrors()`.
+
+---
+
+### 2. AnimeCelShadingPipeline.js Sub-Modules (Shaders, Toon, and Post-Processing)
+
+<span style="color:red">OutlineRenderingSystem.js</span>
+Imports: `ShaderMaterial.js`, `MeshBasicMaterial.js`, `Vector3.js`
+Functions & Algorithms: `generateInvertedHullMesh()`, `applyBackfaceCullingOutlines()`, `calculateSobelEdgeDetection()`, `blendOutlineThickness()`.
+
+<span style="color:red">GradientMapManager.js</span>
+Imports: `DataTexture.js`, `Color.js`, `MathUtils.js`
+Functions & Algorithms: `create1DToonLUT()`, `generate2DGradientMap()`, `mapDiffuseIntensityToColor()`, `updateGradientContext()`.
+
+<span style="color:red">SpecularHighlightController.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `calculateBlinnPhongSpecular()`, `applyAnimeSharpSpecs()`, `generateEyeReflectionShapes()`, `tintSpecularHighlights()`.
+
+<span style="color:red">ShadowColorTintingSystem.js</span>
+Imports: `Color.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateShadowHueShift()`, `applyCoolShadowTints()`, `blendBounceLightColors()`, `updateShadowContext()`.
+
+<span style="color:red">EmissiveGlowPipeline.js</span>
+Imports: `ShaderMaterial.js`, `Color.js`, `Vector3.js`
+Functions & Algorithms: `calculateEmissiveThreshold()`, `generateGlowMask()`, `applyUnrealBloom()`, `animateMagicEffects()`.
+
+<span style="color:red">HatchingAndStipplingShader.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `generateCrossHatchPattern()`, `applyMangaStippling()`, `mapLightIntensityToHatchDensity()`, `rotateHatchAngles()`.
+
+<span style="color:red">ColorQuantizationFilter.js</span>
+Imports: `ShaderMaterial.js`, `Color.js`, `MathUtils.js`
+Functions & Algorithms: `applyPosterizationEffect()`, `reduceColorBitDepth()`, `preventColorBanding()`, `ditherQuantizedOutput()`.
+
+<span style="color:red">ScreenSpaceAmbientOcclusion.js</span>
+Imports: `ShaderMaterial.js`, `WebGLRenderTarget.js`, `Vector2.js`
+Functions & Algorithms: `calculateSSAOSamples()`, `blurOcclusionMap()`, `applyCelShadedAO()`, `integrateAOIntoDiffuse()`.
+
+<span style="color:red">ChromaticAberrationPostProcess.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `calculateLensDistortion()`, `offsetRGBChannels()`, `applyActionCameraShake()`, `blendAberrationIntensity()`.
+
+<span style="color:red">DitheringAndNoiseInjector.js</span>
+Imports: `ShaderMaterial.js`, `MathUtils.js`
+Functions & Algorithms: `generateBayerMatrix()`, `applyFilmGrain()`, `injectTemporalNoise()`, `smoothGradientTransitions()`.
+
+---
+
+### 3. DynamicLightingAndShadows.js Sub-Modules (Lights, Shadows, and Bounce)
+
+<span style="color:red">CascadedShadowMapOptimizer.js</span>
+Imports: `DirectionalLight.js`, `Matrix4.js`, `Frustum.js`
+Functions & Algorithms: `splitCameraFrustum()`, `calculateOrthographicBounds()`, `tuneShadowMapBias()`, `stabilizeShadowCascades()`.
+
+<span style="color:red">VirtualPointLightSystem.js</span>
+Imports: `PointLight.js`, `ShaderMaterial.js`, `Vector3.js`
+Functions & Algorithms: `deferPointLightRendering()`, `calculateLightVolumeIntersection()`, `applyAnimePointGlow()`, `optimizeLightCount()`.
+
+<span style="color:red">BouncedLightApproximator.js</span>
+Imports: `HemisphereLight.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `calculateSphericalHarmonics()`, `approximateGroundBounce()`, `tintIndirectLighting()`, `updateHemisphereContext()`.
+
+<span style="color:red">LightCookieProjector.js</span>
+Imports: `DirectionalLight.js`, `Texture.js`, `Matrix4.js`
+Functions & Algorithms: `projectGoboTextures()`, `generateDappledLightPatterns()`, `animateCookieRotation()`, `maskLightCookies()`.
+
+<span style="color:red">DynamicShadowResolutionScaler.js</span>
+Imports: `WebGLShadowMap.js`, `MathUtils.js`
+Functions & Algorithms: `assessShadowMapUsage()`, `downscaleDistantShadows()`, `upscaleNearShadows()`, `balanceGPUOverhead()`.
+
+<span style="color:red">AreaLightSoftener.js</span>
+Imports: `RectAreaLight.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `approximateRectAreaDiffuse()`, `calculateSoftShadowPenumbra()`, `blendAreaLightSpecular()`, `optimizeAreaLightMath()`.
+
+<span style="color:red">LightFlickerController.js</span>
+Imports: `PointLight.js`, `MathUtils.js`, `Color.js`
+Functions & Algorithms: `generatePerlinFlickerNoise()`, `simulateFireLightDecay()`, `triggerLightningFlash()`, `modulateLightIntensity()`.
+
+<span style="color:red">ShadowCasterCullingSystem.js</span>
+Imports: `Frustum.js`, `Object3D.js`, `Matrix4.js`
+Functions & Algorithms: `cullDistantShadowCasters()`, `optimizeLightSpaceFrustum()`, `batchShadowMapPasses()`, `reduceOverdraw()`.
+
+<span style="color:red">GlobalIlluminationBaker.js</span>
+Imports: `WebGLRenderTarget.js`, `ShaderMaterial.js`, `Vector3.js`
+Functions & Algorithms: `bakeRealtimeLightmaps()`, `calculateIndirectDiffuse()`, `updateStaticBounceLighting()`, `blendBakedAndDynamic()`.
+
+<span style="color:red">VolumetricLightShafts.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `Matrix4.js`
+Functions & Algorithms: `renderLightScattering()`, `calculateGodRayDensity()`, `applyRadialBlur()`, `maskShaftsWithGeometry()`.
+
+---
+
+### 4. AtmosphericFogAndMood.js Sub-Modules (Fog, Weather, and Grading)
+
+<span style="color:red">HeightBasedFogController.js</span>
+Imports: `FogExp2.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateAltitudeDensity()`, `applyValleyFog()`, `thinMountainMist()`, `updateHeightGradient()`.
+
+<span style="color:red">VolumetricFogRenderer.js</span>
+Imports: `ShaderMaterial.js`, `WebGLRenderTarget.js`, `Vector3.js`
+Functions & Algorithms: `raymarchFogVolume()`, `calculateLightAbsorption()`, `scatterVolumetricLight()`, `optimizeRaySteps()`.
+
+<span style="color:red">WeatherTransitionBlender.js</span>
+Imports: `Color.js`, `MathUtils.js`, `Vector3.js`
+Functions & Algorithms: `crossfadeWeatherPresets()`, `interpolateFogDensity()`, `smoothMoodShifts()`, `preventVisualPopping()`.
+
+<span style="color:red">ColorGradingLUTGenerator.js</span>
+Imports: `DataTexture.js`, `Color.js`, `MathUtils.js`
+Functions & Algorithms: `generate3DLUT()`, `applyCinematicGrading()`, `shiftAnimeColorPalette()`, `updateLUTContext()`.
+
+<span style="color:red">WindZoneInfluencer.js</span>
+Imports: `Vector3.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `defineLocalWindBounds()`, `applyTurbulenceDistortion()`, `deflectFogParticles()`, `blendWindZones()`.
+
+<span style="color:red">AtmosphericScatteringCalculator.js</span>
+Imports: `Vector3.js`, `Color.js`, `MathUtils.js`
+Functions & Algorithms: `approximateRayleighScattering()`, `calculateMieScattering()`, `shiftHorizonHues()`, `optimizeScatteringMath()`.
+
+<span style="color:red">MoodAudioReactiveLinker.js</span>
+Imports: `AudioAnalyser.js`, `Color.js`, `MathUtils.js`
+Functions & Algorithms: `mapFrequencyToFogDensity()`, `modulateMoodIntensity()`, `syncWeatherToBeat()`, `calibrateAudioSensitivity()`.
+
+<span style="color:red">DepthOfFieldController.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `calculateCircleOfConfusion()`, `applyBokehBlur()`, `focusCameraSubject()`, `animateFocusPull()`.
+
+<span style="color:red">LensFlareAndBloomManager.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `Color.js`
+Functions & Algorithms: `detectBrightPixels()`, `generateAnamorphicStreaks()`, `applyStarburstFilter()`, `blendFlareArtifacts()`.
+
+<span style="color:red">EnvironmentalHazeSystem.js</span>
+Imports: `FogExp2.js`, `Color.js`, `Vector3.js`
+Functions & Algorithms: `simulateDustParticles()`, `applySmogDensity()`, `increaseHumidityHaze()`, `reduceContrastAtDistance()`.
+
+---
+
+### 5. ProceduralSkyAndClouds.js Sub-Modules (Sky, Clouds, and Celestial)
+
+<span style="color:red">RayleighScatteringSkyShader.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `calculateSkyRadiance()`, `simulateAtmosphericDepth()`, `shiftZenithToHorizon()`, `optimizeScatteringIntegrals()`.
+
+<span style="color:red">CumulusCloudVolumeGenerator.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generate3DNoiseDensity()`, `shapeCumulusPuffs()`, `calculateCloudSelfShadowing()`, `animateCloudDrift()`.
+
+<span style="color:red">CirrusCloudStreakRenderer.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `generateHighAltitudeNoise()`, `stretchCloudUVs()`, `applyWispyTransparency()`, `animateWindShear()`.
+
+<span style="color:red">CelestialBodyTracker.js</span>
+Imports: `Vector3.js`, `MathUtils.js`, `Color.js`
+Functions & Algorithms: `calculateSunAzimuthElevation()`, `trackMoonPhases()`, `updateCelestialColors()`, `syncWithTimeOfDay()`.
+
+<span style="color:red">StarfieldAndMilkyWaySystem.js</span>
+Imports: `PointsMaterial.js`, `BufferGeometry.js`, `Vector3.js`
+Functions & Algorithms: `generateStarPositions()`, `applyMilkyWayTexture()`, `twinkleStarBrightness()`, `rotateStarfield()`.
+
+<span style="color:red">CloudLightingIntegrator.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `calculateCloudDiffuse()`, `applySilverLiningEffect()`, `tintCloudUndersides()`, `updateLightDirection()`.
+
+<span style="color:red">SkyboxMipMapGenerator.js</span>
+Imports: `CubeTexture.js`, `WebGLRenderTarget.js`, `ShaderMaterial.js`
+Functions & Algorithms: `blurSkyboxFaces()`, `generateReflectionMips()`, `optimizeCubeMapGeneration()`, `updateEnvironmentMap()`.
+
+<span style="color:red">AuroraBorealisEffect.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generateCurtainNoise()`, `animateAuroraWaves()`, `applyGreenPurpleGradients()`, `modulateAuroraIntensity()`.
+
+<span style="color:red">CloudDensityMapper.js</span>
+Imports: `MathUtils.js`, `Vector2.js`, `Color.js`
+Functions & Algorithms: `mapBiomeToCloudCoverage()`, `adjustCloudOpacity()`, `clearSkyTransitions()`, `updateDensityUniforms()`.
+
+<span style="color:red">TimeOfDaySkyInterpolator.js</span>
+Imports: `Color.js`, `MathUtils.js`, `Vector3.js`
+Functions & Algorithms: `interpolateDawnColors()`, `transitionToNoonBlue()`, `applyDuskOranges()`, `fadeToNightBlack()`.
+
+---
+
+### 6. InstancingAndColorVariation.js Sub-Modules (Instances, Batching, and LOD)
+
+<span style="color:red">GPUInstancingManager.js</span>
+Imports: `InstancedMesh.js`, `Matrix4.js`, `BufferAttribute.js`
+Functions & Algorithms: `allocateInstanceBuffers()`, `updateInstanceMatricesGPU()`, `optimizeDrawCalls()`, `manageInstanceCounts()`.
+
+<span style="color:red">BatchedMeshMerger.js</span>
+Imports: `BatchedMesh.js`, `BufferGeometry.js`, `Material.js`
+Functions & Algorithms: `mergeStaticGeometries()`, `combineMaterialAttributes()`, `reduceStateChanges()`, `optimizeBatchBounds()`.
+
+<span style="color:red">LODSelectorSystem.js</span>
+Imports: `LOD.js`, `Object3D.js`, `Camera.js`
+Functions & Algorithms: `calculateScreenSpaceError()`, `swapMeshDetailLevels()`, `fadeLODTransitions()`, `optimizeLODDistances()`.
+
+<span style="color:red">InstanceColorPaletteRandomizer.js</span>
+Imports: `Color.js`, `MathUtils.js`, `Vector3.js`
+Functions & Algorithms: `generateHSVVariations()`, `applyBiomeColorRules()`, `preventColorClumping()`, `updateInstanceColors()`.
+
+<span style="color:red">FrustumCullingOptimizer.js</span>
+Imports: `Frustum.js`, `Matrix4.js`, `Vector3.js`
+Functions & Algorithms: `calculateInstanceBoundingSpheres()`, `testFrustumIntersection()`, `cullOffscreenInstances()`, `optimizeCullingMath()`.
+
+<span style="color:red">InstanceAnimationController.js</span>
+Imports: `ShaderMaterial.js`, `Matrix4.js`, `MathUtils.js`
+Functions & Algorithms: `applyPerInstanceAnimation()`, `calculateSwayMatrices()`, `updateAnimationUniforms()`, `syncInstanceTimers()`.
+
+<span style="color:red">OcclusionCullingSystem.js</span>
+Imports: `WebGLRenderer.js`, `Object3D.js`, `Frustum.js`
+Functions & Algorithms: `performOcclusionQueries()`, `hideBlockedInstances()`, `preventOverdraw()`, `optimizeQueryFrequency()`.
+
+<span style="color:red">MaterialVariantGenerator.js</span>
+Imports: `Material.js`, `ShaderMaterial.js`, `Color.js`
+Functions & Algorithms: `cloneBaseMaterials()`, `injectVariantUniforms()`, `batchMaterialProperties()`, `optimizeShaderCompiles()`.
+
+<span style="color:red">InstanceTransformUpdater.js</span>
+Imports: `Matrix4.js`, `Vector3.js`, `Quaternion.js`
+Functions & Algorithms: `composeTransformationMatrices()`, `optimizeMatrixMultiplication()`, `updateInstanceScales()`, `applyLocalRotations()`.
+
+<span style="color:red">DrawCallMinimizer.js</span>
+Imports: `WebGLRenderer.js`, `Material.js`, `BufferGeometry.js`
+Functions & Algorithms: `sortRenderQueue()`, `groupByMaterialState()`, `mergeDrawCalls()`, `optimizeRenderPipeline()`.
+
+---
+
+### 7. BaseProceduralGeometry.js Sub-Modules (Meshes, Displacement, and Normals)
+
+<span style="color:red">FractalNoiseDisplacer.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateFractalBrownianMotion()`, `applyMultiOctaveNoise()`, `displaceVertexPositions()`, `preserveVolume()`.
+
+<span style="color:red">VoronoiFractureGenerator.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generateVoronoiSites()`, `calculateCellDistances()`, `fractureMeshFaces()`, `applyCrackDisplacement()`.
+
+<span style="color:red">FlatNormalCalculator.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateFaceCentroids()`, `computePerFaceNormals()`, `applyFlatShadingAttributes()`, `optimizeNormalMath()`.
+
+<span style="color:red">VertexColorBaker.js</span>
+Imports: `BufferGeometry.js`, `Color.js`, `Vector3.js`
+Functions & Algorithms: `bakeAmbientOcclusion()`, `calculateVertexCurvature()`, `applyBakedColors()`, `optimizeColorAttributes()`.
+
+<span style="color:red">MeshSimplificationTool.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateEdgeCollapseCost()`, `performQuadricErrorDecimation()`, `preserveBoundaryEdges()`, `generateLODMeshes()`.
+
+<span style="color:red">ProceduralUVUnwrapper.js</span>
+Imports: `BufferGeometry.js`, `Vector2.js`, `Vector3.js`
+Functions & Algorithms: `calculateTriplanarCoordinates()`, `projectBoxMapping()`, `seamlessTextureTiling()`, `optimizeUVAttributes()`.
+
+<span style="color:red">SDFEvaluator.js</span>
+Imports: `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `evaluateSignedDistanceField()`, `calculateSurfaceGradients()`, `generateSDFMesh()`, `optimizeSDFMath()`.
+
+<span style="color:red">GeometryStreamingManager.js</span>
+Imports: `BufferGeometry.js`, `Object3D.js`, `Frustum.js`
+Functions & Algorithms: `loadTerrainChunks()`, `unloadDistantGeometry()`, `manageMemoryBudget()`, `preventStreamingPops()`.
+
+<span style="color:red">EdgeDetectionMeshProcessor.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateEdgeAngles()`, `markSharpEdges()`, `prepareOutlineGeometry()`, `optimizeEdgeAttributes()`.
+
+<span style="color:red">MorphTargetBlender.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `interpolateMorphPositions()`, `blendShapeKeys()`, `applyMorphNormals()`, `optimizeMorphMath()`.
+
+---
+
+### 8. VegetationAndSSSSystem.js Sub-Modules (Plants, Leaves, and SSS)
+
+<span style="color:red">WindSwayAnimationShader.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateVertexHeightWeight()`, `applyGlobalWindVector()`, `addTurbulenceNoise()`, `optimizeSwayMath()`.
+
+<span style="color:red">SubsurfaceScatteringApproximator.js</span>
+Imports: `ShaderMaterial.js`, `Color.js`, `Vector3.js`
+Functions & Algorithms: `calculateTranslucencyWrap()`, `applyBacklightColorShift()`, `simulateLightAbsorption()`, `optimizeSSSMath()`.
+
+<span style="color:red">LeafClusterGenerator.js</span>
+Imports: `InstancedMesh.js`, `BufferGeometry.js`, `Vector3.js`
+Functions & Algorithms: `generateLeafCardGeometry()`, `applyAlphaTestMasking()`, `orientLeavesToNormals()`, `optimizeLeafBatching()`.
+
+<span style="color:red">GrassBladeInstancer.js</span>
+Imports: `InstancedMesh.js`, `ShaderMaterial.js`, `Vector3.js`
+Functions & Algorithms: `generateGrassBladeMesh()`, `applyShellTechnique()`, `animateGrassSway()`, `optimizeGrassDensity()`.
+
+<span style="color:red">CanopyLightOccluder.js</span>
+Imports: `Object3D.js`, `Material.js`, `Vector3.js`
+Functions & Algorithms: `castLeafShadows()`, `generateDappledLightMaps()`, `optimizeShadowCasting()`, `reduceCanopyOverdraw()`.
+
+<span style="color:red">SeasonalColorChanger.js</span>
+Imports: `Color.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `interpolateSeasonalPalettes()`, `shiftGreenToAutumn()`, `applyWinterDesaturation()`, `updateColorUniforms()`.
+
+<span style="color:red">PetalAndSeedParticleEmitter.js</span>
+Imports: `PointsMaterial.js`, `BufferGeometry.js`, `Vector3.js`
+Functions & Algorithms: `emitFloraParticles()`, `applyGravityAndDrag()`, `animateFallingRotation()`, `optimizeParticleLifecycle()`.
+
+<span style="color:red">RootAndVineProceduralGenerator.js</span>
+Imports: `TubeGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generateLSystemRules()`, `growProceduralBranches()`, `applyTropismForces()`, `optimizeGrowthMath()`.
+
+<span style="color:red">FlowerBloomingAnimator.js</span>
+Imports: `ShaderMaterial.js`, `Matrix4.js`, `MathUtils.js`
+Functions & Algorithms: `animatePetalScale()`, `applyBloomingRotation()`, `syncBloomToTimeOfDay()`, `optimizeBloomMath()`.
+
+<span style="color:red">VegetationDensityMapper.js</span>
+Imports: `MathUtils.js`, `Vector2.js`, `Color.js`
+Functions & Algorithms: `mapBiomeToDensity()`, `preventOvercrowding()`, `applyPoissonDiskSampling()`, `optimizePlacementRules()`.
+
+---
+
+### 9. FluidAndWaterBase.js Sub-Modules (Water, Waves, and Reflections)
+
+<span style="color:red">GerstnerWaveSummation.js</span>
+Imports: `Vector3.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `calculateWaveSteepness()`, `sumMultipleWaveDirections()`, `displaceVertexPositions()`, `optimizeWaveMath()`.
+
+<span style="color:red">PlanarReflectionRenderer.js</span>
+Imports: `WebGLRenderTarget.js`, `PerspectiveCamera.js`, `Matrix4.js`
+Functions & Algorithms: `mirrorCameraAcrossPlane()`, `renderReflectionPass()`, `clipBelowWaterPlane()`, `optimizeReflectionDraws()`.
+
+<span style="color:red">CausticsLightProjector.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `generateCausticPatterns()`, `projectUnderwaterLight()`, `animateCausticMovement()`, `optimizeCausticMath()`.
+
+<span style="color:red">FoamAndWakeGenerator.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateShorelineProximity()`, `generateBoatWakeTrails()`, `animateFoamDissipation()`, `optimizeFoamBlending()`.
+
+<span style="color:red">RefractionDistortionShader.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `Vector3.js`
+Functions & Algorithms: `calculateRefractionVector()`, `distortUnderwaterUVs()`, `applySnellLawApproximation()`, `optimizeRefractionMath()`.
+
+<span style="color:red">WaterDepthColorMapper.js</span>
+Imports: `Color.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `sampleSceneDepthTexture()`, `calculateWaterDepth()`, `blendShallowToDeepColors()`, `optimizeDepthMapping()`.
+
+<span style="color:red">RainRippleEffect.js</span>
+Imports: `ShaderMaterial.js`, `Vector2.js`, `MathUtils.js`
+Functions & Algorithms: `generateRippleCircles()`, `animateRippleExpansion()`, `fadeRippleOpacity()`, `optimizeRippleMath()`.
+
+<span style="color:red">FluidSurfaceTensionSimulator.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateMeniscusCurve()`, `applySurfaceTensionDisplacement()`, `blendWaterWithRocks()`, `optimizeTensionMath()`.
+
+<span style="color:red">WaterFlowMapController.js</span>
+Imports: `Texture.js`, `Vector2.js`, `ShaderMaterial.js`
+Functions & Algorithms: `sampleFlowMapTextures()`, `directRiverCurrents()`, `animateFlowUVs()`, `optimizeFlowMapping()`.
+
+<span style="color:red">UnderwaterFogAndGodRays.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `Color.js`
+Functions & Algorithms: `applyUnderwaterExponentialFog()`, `calculateSubmergedGodRays()`, `tintUnderwaterColors()`, `optimizeUnderwaterMath()`.
+
+---
+
+### 10. ParticleAndWindSystem.js Sub-Modules (Particles, Dust, and Weather FX)
+
+<span style="color:red">GPUComputeParticleEngine.js</span>
+Imports: `WebGLRenderer.js`, `BufferAttribute.js`, `ShaderMaterial.js`
+Functions & Algorithms: `initializeComputeShaders()`, `updateParticlePhysicsGPU()`, `optimizeParticleThroughput()`, `manageComputeBuffers()`.
+
+<span style="color:red">WindTurbulenceField.js</span>
+Imports: `Vector3.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `calculateCurlNoise()`, `generateOrganicFlow()`, `applyWindShearLayers()`, `optimizeTurbulenceMath()`.
+
+<span style="color:red">RainDropCollisionSystem.js</span>
+Imports: `Vector3.js`, `MathUtils.js`, `PointsMaterial.js`
+Functions & Algorithms: `detectSurfaceIntersections()`, `spawnSplashParticles()`, `applyRainGravity()`, `optimizeCollisionMath()`.
+
+<span style="color:red">SnowAccumulationMapper.js</span>
+Imports: `ShaderMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `calculateSurfaceNormalUpness()`, `accumulateSnowThickness()`, `meltSnowOverTime()`, `optimizeAccumulationMath()`.
+
+<span style="color:red">FireAndSmokeEmitter.js</span>
+Imports: `PointsMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `applyBuoyancyForces()`, `generateHeatDistortion()`, `fadeSmokeOpacity()`, `optimizeFireLifecycle()`.
+
+<span style="color:red">DustMoteAmbientSystem.js</span>
+Imports: `PointsMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generateFloatingParticles()`, `applyBrownianMotion()`, `catchLightShafts()`, `optimizeDustRendering()`.
+
+<span style="color:red">ParticleTrailRenderer.js</span>
+Imports: `BufferGeometry.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `recordParticleHistory()`, `generateTrailMesh()`, `applyMotionBlur()`, `optimizeTrailMath()`.
+
+<span style="color:red">ElectricalSparkGenerator.js</span>
+Imports: `LineBasicMaterial.js`, `Vector3.js`, `MathUtils.js`
+Functions & Algorithms: `generateLightningBranches()`, `applyMidpointDisplacement()`, `animateSparkFlicker()`, `optimizeSparkMath()`.
+
+<span style="color:red">ParticleColorOverLifetime.js</span>
+Imports: `Color.js`, `MathUtils.js`, `ShaderMaterial.js`
+Functions & Algorithms: `interpolateColorGradients()`, `fadeParticleAlpha()`, `applyAgeBasedTinting()`, `optimizeColorMath()`.
+
+<span style="color:red">WindZoneCollider.js</span>
+Imports: `Vector3.js`, `Object3D.js`, `MathUtils.js`
+Functions & Algorithms: `detectParticleCollisions()`, `deflectWindFlow()`, `createTurbulenceWakes()`, `optimizeColliderMath()`.
+
+
